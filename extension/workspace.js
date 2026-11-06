@@ -168,7 +168,7 @@ function renderItems() {
   const eligibleCount = items.filter(item => eligibleForUi(item)).length;
   find('connect-calendar').textContent = calendarConnected ? 'Google 캘린더 연결 해제' : 'Google 캘린더 연결';
   find('sync-calendar').disabled = !calendarConnected || eligibleCount === 0 || syncingCalendar;
-  find('sync-calendar').textContent = syncingCalendar ? '캘린더 동기화 중…' : eligibleCount ? `확인한 일정 동기화 (${eligibleCount})` : '확인한 일정 동기화';
+  find('sync-calendar').textContent = syncingCalendar ? '캘린더 동기화 중…' : eligibleCount ? `일정 동기화 (${eligibleCount})` : '일정 동기화';
   const filter = find('filter').value; const query = find('search').value.trim().toLowerCase();
   const visible = items.filter(item => (!query || `${item.title} ${detailText(item)}`.toLowerCase().includes(query)) && (filter === 'all' || (filter === 'pending' && !item.completed) || (filter === 'completed' && item.completed) || (filter === 'review' && !item.confirmed)));
   find('task-list').replaceChildren(...visible.map(item => card(item, true)));

@@ -16,7 +16,7 @@
 
 1. 완료: `workspace.js`의 `run`과 `review.js`의 ‘할 일 정리하기’가 공통 `api.mjs`를 통해 같은 Worker API를 호출합니다. 전송 동의와 45,000자 제한을 적용하고 응답은 `validateAnalysis` → `makeItems`로 변환합니다. 샘플은 실제 분석 결과로 취급하지 않습니다.
 2. 완료: `save`/수동 추가/편집/완료/삭제는 background 직렬화 경로를 통해 `chrome.storage.local`에 저장합니다. 화면 카드/DOM은 저장 원본이 아닙니다.
-3. 완료: Google Calendar OAuth와 동기화는 `manifest.json`, `background.js`, `calendar.mjs`에 있습니다. 확인 완료·유효 날짜·미완료 항목만 허용하며 안정적인 이벤트 ID로 반복 동기화 시 기존 일정을 갱신합니다. Google Cloud OAuth 클라이언트 유형/확장 ID 설정과 실제 계정 로그인은 배포 환경에서 검증해야 합니다. 해줌에서 항목 완료/삭제 시 Google Calendar 일정은 자동 삭제하지 않습니다.
+3. 완료: Google Calendar OAuth와 동기화는 `manifest.json`, `background.js`, `calendar.mjs`에 있습니다. 일정은 연도를 포함한 유효 날짜(명시된 날짜 범위 포함), 할 일은 확인 완료·유효 날짜·미완료 항목만 허용하며 안정적인 이벤트 ID로 반복 동기화 시 기존 일정을 갱신합니다. Google Cloud OAuth 클라이언트 유형/확장 ID 설정과 실제 계정 로그인은 배포 환경에서 검증해야 합니다. 해줌에서 항목 완료/삭제 시 Google Calendar 일정은 자동 삭제하지 않습니다.
 4. 알림: 확인된 task만 한국 시간 09:00에 3/1/0일 전 예약. onInstalled/onStartup와 저장 변경 때 재조정. 서비스 워커가 깨어날 때마다 전체 알람 삭제하지 말 것. 날짜 범위/원문 날짜/이미 지난 시각은 검토로 돌릴 것.
 5. `background.js`의 `selection` → `review.js`의 `showSelectionReview`가 선택 원문을 페이지 안으로 전달합니다. 캡쳐는 같은 UI를 사용하며 `readCapture`로 OCR 문자열을 받습니다. 새 탭·iframe·`pendingSelection` 전달은 사용하지 않습니다. 원문 출처와 날짜 근거를 실제 AI 결과 모델에 연결해 주세요.
 

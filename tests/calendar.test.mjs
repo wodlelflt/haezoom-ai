@@ -40,6 +40,26 @@ test('날짜가 있는 일정은 원문 확인 없이 바로 캘린더에 등록
   assert.equal(eligibleForCalendar({ ...schedule, date: null }), false);
 });
 
+test('명시된 한국어 날짜 범위 일정을 시작일과 종료일을 포함해 종일 등록한다', () => {
+  const schedule = {
+    ...item,
+    confirmed: false,
+    needs_review: true,
+    date: '2026년 5월 18일(월) ~ 5월 22일(금) [5일간]'
+  };
+  assert.equal(eligibleForCalendar(schedule), true);
+  const event = makeGoogleEvent(schedule);
+  assert.deepEqual(event.start, { date: '2026-05-18' });
+  assert.deepEqual(event.end, { date: '2026-05-23' });
+});
+
+test('연도 없는 날짜 범위와 유효하지 않은 날짜 범위는 등록할 수 없다', () => {
+  const schedule = { ...item, confirmed: false, needs_review: true };
+  assert.equal(eligibleForCalendar({ ...schedule, date: '5월 18일 ~ 5월 22일' }), false);
+  assert.equal(eligibleForCalendar({ ...schedule, date: '2026년 2월 29일' }), false);
+  assert.equal(eligibleForCalendar({ ...schedule, date: '2026-11-22 ~ 2026-11-18' }), false);
+});
+
 test('할 일은 기존처럼 확인 완료 후에만 캘린더에 등록할 수 있다', () => {
   const task = { ...item, kind: 'task', confirmed: false, needs_review: true };
   assert.equal(eligibleForCalendar(task), false);

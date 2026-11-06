@@ -10,7 +10,7 @@
 
 `review.js`가 캡쳐와 드래그의 공통 확인 UI입니다. `background.js`의 `selection`은 해당 페이지에 `showSelectionReview`를 전달하며 새 탭이나 세션 전달값을 만들지 않습니다. 캡쳐 이미지는 로컬 OCR 단계를 거치지 않고, 원문 확인·동의 뒤 `analyzeImage` → Worker → Claude 이미지 입력으로 전달됩니다. PDF·이미지도 선택 시에는 페이지 수만 확인하고, 분석 동의 뒤 원본 파일을 Worker로 전송합니다. 로컬 파일과 이미지 원본은 영구 저장하지 않습니다. `captureResult`, `pendingCapture`, `pendingSelection` 기반 인계 방식은 폐기했습니다.
 
-페이지 내 확인 창의 ‘할 일 정리하기’와 문서 정리 화면의 `run` 버튼은 공통 `extension/api.mjs`를 통해 Claude 분석 API를 호출합니다. 두 경로 모두 전송 전 동의를 받고, `validateAnalysis`와 `makeItems`를 거쳐 원문 근거·상세 필드를 보여줍니다. 목록은 `chrome.storage.local`에 저장하고, 사용자가 확인한 날짜가 있는 미완료 항목은 Google Calendar에 수동 동기화할 수 있습니다. 알림은 미구현입니다.
+페이지 내 확인 창의 ‘할 일 정리하기’와 문서 정리 화면의 `run` 버튼은 공통 `extension/api.mjs`를 통해 Claude 분석 API를 호출합니다. 두 경로 모두 전송 전 동의를 받고, `validateAnalysis`와 `makeItems`를 거쳐 원문 근거·상세 필드를 보여줍니다. 목록은 `chrome.storage.local`에 저장하고, 명확한 연도 포함 날짜가 있는 일정(날짜 범위 포함)은 바로, 확인한 날짜가 있는 미완료 할 일은 확인 후 Google Calendar에 수동 동기화할 수 있습니다. 알림은 미구현입니다.
 
 이번 작업은 기존 Haezoom Worker와 현재 확장 프로그램을 연결하고, 운영 정적 사이트 자산 제공을 보존하는 설정을 복원했습니다. 기존 CRX는 참고 자료로 두고 새 확장 프로그램을 구성했습니다. 영구 저장과 Google Calendar 수동 동기화는 구현했으며, 알림은 후속 범위입니다. 실제 계정으로 로그인하려면 Google Cloud OAuth 앱과 로드된 확장 프로그램 ID 설정이 필요합니다.
 

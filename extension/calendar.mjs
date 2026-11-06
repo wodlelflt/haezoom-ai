@@ -17,8 +17,32 @@ export function googleEventId(itemId) {
   return `a${itemId.replaceAll('-', '').toLowerCase()}`;
 }
 
+function calendarDates(item) {
+  if (item.kind !== 'schedule') {
+    return validDate(item.date) ? { start: item.date, end: item.date } : null;
+  }
+  if (validDate(item.date)) return { start: item.date, end: item.date };
+  if (typeof item.date !== 'string') return null;
+
+  const iso = item.date.match(/^\s*(20\d{2}-\d{2}-\d{2})(?:\s*[~〜～–—-]\s*(20\d{2}-\d{2}-\d{2}))?\s*$/);
+  if (iso) {
+    const start = iso[1];
+    const end = iso[2] || start;
+    return validDate(start) && validDate(end) && end >= start ? { start, end } : null;
+  }
+
+  const korean = item.date.match(/^\s*(20\d{2})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일(?:\s*\([^)]*\))?(?:\s*(?:~|〜|～|–|—|-|부터)\s*(?:(20\d{2})\s*년\s*)?(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일(?:\s*\([^)]*\))?(?:\s*까지)?(?:\s*\[[^\]]*\])?)?\s*$/);
+  if (!korean) return null;
+  const [, startYear, startMonth, startDay, endYear, endMonth, endDay] = korean;
+  const start = `${startYear}-${startMonth.padStart(2, '0')}-${startDay.padStart(2, '0')}`;
+  const end = endDay
+    ? `${endYear || startYear}-${(endMonth || startMonth).padStart(2, '0')}-${endDay.padStart(2, '0')}`
+    : start;
+  return validDate(start) && validDate(end) && end >= start ? { start, end } : null;
+}
+
 export function eligibleForCalendar(item) {
-  if (!item || item.completed || !validDate(item.date) || !item.title?.trim()) return false;
+  if (!item || item.completed || !item.title?.trim() || !calendarDates(item)) return false;
   return item.kind === 'schedule' || (item.confirmed && !item.needs_review);
 }
 
@@ -49,8 +73,9 @@ function nextDate(value) {
 
 export function makeGoogleEvent(item) {
   if (!eligibleForCalendar(item)) {
-    throw new Error('유효한 날짜가 있는 일정 또는 확인 완료한 미완료 항목만 캘린더에 등록할 수 있습니다.');
+    throw new Error('날짜가 확인되는 일정 또는 확인 완료한 미완료 항목만 캘린더에 등록할 수 있습니다.');
   }
+  const dates = calendarDates(item);
   const details = [
     item.action || item.details,
     item.materials?.length ? `준비물: ${item.materials.join(', ')}` : '',
@@ -62,12 +87,12 @@ export function makeGoogleEvent(item) {
     item.source?.url ? `출처 링크: ${item.source.url}` : ''
   ].filter(Boolean).join('\n');
   const event = { summary: item.title.trim(), description: details.slice(0, 8000) };
-  const time = item.kind === 'schedule' ? scheduledTime(item.time) : null;
+  const time = item.kind === 'schedule' && dates.start === dates.end ? scheduledTime(item.time) : null;
   if (!time) {
-    event.start = { date: item.date };
-    event.end = { date: nextDate(item.date) };
+    event.start = { date: dates.start };
+    event.end = { date: nextDate(dates.end) };
   } else {
-    const start = Date.parse(`${item.date}T${time}:00+09:00`);
+    const start = Date.parse(`${dates.start}T${time}:00+09:00`);
     event.start = { dateTime: new Date(start).toISOString() };
     event.end = { dateTime: new Date(start + 60 * 60 * 1000).toISOString() };
   }
