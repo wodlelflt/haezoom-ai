@@ -21,8 +21,19 @@ document.getElementById('tasks').onclick = () => open('tasks');
 document.getElementById('upload').onclick = () => open('upload');
 document.getElementById('settings').onclick = () => open('settings');
 document.getElementById('capture').onclick = async () => {
-  try { const result = await chrome.runtime.sendMessage({ type: 'startCapture' }); if (!result?.ok) throw new Error(result?.error); window.close(); }
-  catch (error) { status.textContent = error.message || '캡쳐할 웹페이지를 열어 주세요.'; }
+  const button = document.getElementById('capture');
+  button.disabled = true;
+  status.textContent = '현재 탭에서 캡쳐를 시작하고 있어요.';
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id || !/^(https?|file):/.test(tab.url || '')) throw new Error('일반 웹페이지나 PDF에서 캡쳐를 시작해 주세요. Chrome 설정·새 탭에서는 캡쳐할 수 없습니다.');
+    const result = await chrome.runtime.sendMessage({ type: 'startCapture', payload: { tabId: tab.id } });
+    if (!result?.ok) throw new Error(result?.error || '캡쳐를 시작하지 못했어요.');
+    window.close();
+  } catch (error) {
+    status.textContent = error.message || '캡쳐 권한을 확인하고 다시 시도해 주세요.';
+    button.disabled = false;
+  }
 };
 document.getElementById('selection').onclick = async () => {
   try {

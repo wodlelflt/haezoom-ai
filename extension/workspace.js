@@ -2,6 +2,7 @@ import { makeItems, validDate } from './core.mjs';
 import { samples } from './samples.mjs';
 import { getPdfPageCount } from './ocr.mjs';
 import { analyzeDocument, analyzeText } from './api.mjs';
+import { mergeItems } from './item-store.mjs';
 
 const find = id => document.getElementById(id);
 let items = []; let draft = []; let selectedDraftIds = new Set(); let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null; let calendarConnected = false;
@@ -21,9 +22,24 @@ connectButton.type = 'button';
 connectButton.textContent = 'Google 캘린더 연결';
 syncButton.before(connectButton);
 async function request(type, payload = {}) {
-  const response = await chrome.runtime.sendMessage({ type, payload });
+  let timeout;
+  const pending = chrome.runtime.sendMessage({ type, payload });
+  const response = await Promise.race([
+    pending,
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('백그라운드 응답이 지연되고 있어요. 다시 시도해 주세요.')), 8000); })
+  ]).finally(() => clearTimeout(timeout));
   if (!response?.ok) throw new Error(response?.error || '요청을 처리하지 못했어요.');
   return response.data;
+}
+async function saveItemsDirectly(incoming) {
+  const stored = await chrome.storage.local.get('haezoomItems');
+  const result = mergeItems(stored.haezoomItems ?? [], incoming);
+  await chrome.storage.local.set({ haezoomItems: result.items });
+  const confirmed = await chrome.storage.local.get('haezoomItems');
+  if (!Array.isArray(confirmed.haezoomItems) || incoming.some(item => !confirmed.haezoomItems.some(saved => saved.id === item.id || (saved.title === item.title && saved.date === item.date && saved.source?.title === item.source?.title)))) {
+    throw new Error('저장 확인에 실패했습니다. 다시 시도해 주세요.');
+  }
+  return { ...result, items: confirmed.haezoomItems };
 }
 async function refreshCalendarStatus() {
   try { calendarConnected = (await request('calendarStatus')).connected; }
@@ -174,14 +190,23 @@ find('sample').onclick = () => {
   notify('미리 작성한 샘플 결과예요. AI 분석이 아닙니다. 다시 누르면 다른 유형을 볼 수 있어요.');
 };
 find('save').onclick = async () => {
+  const button = find('save');
   try {
     const chosen = draft.filter(item => selectedDraftIds.has(item.id));
     if (!chosen.length) return notify('내 할 일로 가져올 항목을 하나 이상 선택해 주세요.');
-    find('save').disabled = true;
-    const result = await request('addItems', { items: chosen });
+    button.disabled = true;
+    button.textContent = '저장 중…';
+    notify('선택한 항목을 이 Chrome 프로필에 저장하고 있어요.');
+    let result;
+    try { result = await request('addItems', { items: chosen }); }
+    catch (error) {
+      result = await saveItemsDirectly(chosen);
+      notify(`백그라운드 응답이 지연되어 직접 저장했어요. (${error.message})`);
+    }
     items = result.items; location.hash = 'tasks'; renderItems();
     notify(`${result.added}개 항목을 저장했어요. 이 Chrome 프로필에서 다시 열어도 유지됩니다.`);
-  } catch (error) { notify(error.message); updateDraftSaveButton(); }
+  } catch (error) { notify(`저장하지 못했어요. ${error.message}`); }
+  finally { updateDraftSaveButton(); }
 };
 find('run').onclick = async () => {
   const text = find('input-text').value.trim();

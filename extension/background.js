@@ -1,6 +1,7 @@
 import { analyzeImageDataUrl, analyzeText } from './api.mjs';
 import { makeItems, validDate } from './core.mjs';
 import { GoogleCalendarError, syncGoogleEvent } from './calendar.mjs';
+import { mergeItems } from './item-store.mjs';
 
 const globalOrigins = ['https://*/*', 'http://*/*'];
 let globalQueue = Promise.resolve();
@@ -142,15 +143,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       if (sourceUrl.protocol !== 'file:') source.url = `${sourceUrl.origin}${sourceUrl.pathname}`;
       const incoming = makeItems(message.payload?.result, source);
       return inStorageQueue(async () => {
-        const items = await storedItems();
-        let added = 0;
-        for (const item of incoming) {
-          const duplicate = items.some(old => old.title === item.title && old.date === item.date && old.source?.title === item.source?.title);
-          if (!duplicate && !items.some(old => old.id === item.id)) { items.push(item); added++; }
-        }
-        if (items.length > 1000) throw new Error('저장 가능한 항목 수를 초과했습니다.');
-        await chrome.storage.local.set({ [ITEMS_KEY]: items });
-        return { items, added };
+        const result = mergeItems(await storedItems(), incoming);
+        await chrome.storage.local.set({ [ITEMS_KEY]: result.items });
+        return result;
       });
     }
     if (extensionMessages.has(message.type)) {
@@ -160,16 +155,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         const incoming = message.payload?.items;
         if (!Array.isArray(incoming) || incoming.length > 100) throw new Error('저장할 항목 목록이 올바르지 않습니다.');
         return inStorageQueue(async () => {
-          const items = await storedItems();
-          let added = 0;
-          for (const item of incoming) {
-            if (!item || typeof item.id !== 'string' || typeof item.title !== 'string' || !item.title.trim() || item.title.length > 500 || JSON.stringify(item).length > 20000) throw new Error('저장할 항목 내용이 올바르지 않습니다.');
-            const duplicate = items.some(old => old.title === item.title && old.date === item.date && old.source?.title === item.source?.title);
-            if (!duplicate && !items.some(old => old.id === item.id)) { items.push(structuredClone(item)); added++; }
-          }
-          if (items.length > 1000) throw new Error('저장 가능한 항목 수를 초과했습니다.');
-          await chrome.storage.local.set({ [ITEMS_KEY]: items });
-          return { items, added };
+          const result = mergeItems(await storedItems(), incoming);
+          await chrome.storage.local.set({ [ITEMS_KEY]: result.items });
+          return result;
         });
       }
       if (message.type === 'updateItem') {
@@ -248,11 +236,22 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       return true;
     }
     if (message.type === 'startCapture') {
-      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = sender.tab || active;
+      const requestedTabId = message.payload?.tabId;
+      if (requestedTabId !== undefined && (!Number.isInteger(requestedTabId) || requestedTabId < 0)) throw new Error('캡쳐할 탭 정보를 확인해 주세요.');
+      if (sender.tab && requestedTabId !== undefined && requestedTabId !== sender.tab.id) throw new Error('현재 페이지에서 캡쳐를 시작해 주세요.');
+      const [active] = sender.tab ? [] : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const tab = sender.tab || (requestedTabId !== undefined ? await chrome.tabs.get(requestedTabId) : active);
       if (!tab?.id || !/^(https?|file):/.test(tab.url || '')) throw new Error('웹페이지 또는 PDF 파일에서 캡쳐해 주세요.');
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['review.js', 'capture.js'] });
-      const result = await chrome.tabs.sendMessage(tab.id, { type: 'startCapture' });
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['review.js', 'capture.js'] });
+      } catch {
+        throw new Error('이 탭에 캡쳐 도구를 실행할 수 없습니다. 웹페이지를 새로고침하거나 PDF 파일 접근 권한을 확인해 주세요.');
+      }
+      let result;
+      try { result = await chrome.tabs.sendMessage(tab.id, { type: 'startCapture' }); }
+      catch {
+        throw new Error('캡쳐 도구가 페이지에서 응답하지 않습니다. 페이지를 새로고침하고 다시 눌러 주세요.');
+      }
       if (!result?.ok) throw new Error(result?.error || '캡쳐를 시작하지 못했어요.');
       return;
     }
