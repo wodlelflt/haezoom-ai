@@ -11,6 +11,20 @@ find('drop').querySelector('span').textContent = 'PDF 최대 20MB · 30페이지
 const settingsNotes = document.querySelectorAll('#settings .settings-panel p');
 settingsNotes[0].textContent = '캡쳐 이미지는 페이지에서 영역을 먼저 확인한 뒤, 분석 동의 시 이미지 자체를 Cloudflare Worker를 거쳐 Claude로 전송합니다. 선택 문장은 텍스트로 전송합니다.';
 settingsNotes[1].textContent = 'AI 분석은 Claude에 직접 연결됩니다. PDF·이미지는 로컬 OCR을 거치지 않고 원본을 보내 표와 문서 배치를 함께 분석합니다. 영구 저장, 알림, 캘린더는 미연결이며 결과 목록은 새로고침하면 초기화됩니다.';
+const uploadStyles = document.createElement('link'); uploadStyles.rel = 'stylesheet'; uploadStyles.href = new URL('./file-upload.css', import.meta.url).href; document.head.append(uploadStyles);
+const fileCard = document.createElement('div'); fileCard.className = 'selected-file'; fileCard.hidden = true;
+const fileIcon = document.createElement('span'); fileIcon.className = 'selected-file-icon';
+const fileCopy = document.createElement('div'); fileCopy.className = 'selected-file-copy';
+const fileName = document.createElement('strong'); fileName.className = 'selected-file-name';
+const fileMeta = document.createElement('span'); fileMeta.className = 'selected-file-meta';
+fileCopy.append(fileName, fileMeta);
+const removeFile = document.createElement('button'); removeFile.className = 'selected-file-remove'; removeFile.type = 'button'; removeFile.textContent = '×'; removeFile.setAttribute('aria-label', '선택한 파일 제거'); removeFile.title = '파일 제거';
+fileCard.append(fileIcon, fileCopy, removeFile); find('file-status').after(fileCard);
+removeFile.onclick = () => {
+  selectedFile = null; find('file').value = ''; fileCard.hidden = true;
+  find('file-status').textContent = '선택한 파일을 제거했어요.';
+  find('run').disabled = !find('input-text').value.trim();
+};
 const notify = text => { find('status').textContent = text; };
 function invalidateResult() { draft = []; find('analysis-result').hidden = true; find('result-empty').hidden = false; find('save').disabled = true; }
 find('input-text').addEventListener('input', () => { invalidateResult(); if (!selectedFile) source = { title: '입력한 문서' }; });
@@ -72,7 +86,7 @@ function showDraft(result, sample = false) {
   if (!draft.length) find('draft-list').append(node('p', '이 문서에는 해야 할 일이나 날짜가 있는 일정이 없어요.', 'muted'));
 }
 find('sample').onclick = () => {
-  selectedFile = null; find('file').value = ''; find('file-status').textContent = '';
+  selectedFile = null; find('file').value = ''; fileCard.hidden = true; find('file-status').textContent = '';
   const sample = samples[sampleIndex++ % samples.length]; find('input-text').value = sample.text; source = { title: `가상 샘플 문서 ${(sampleIndex - 1) % samples.length + 1}` };
   showDraft(sample.result, true);
   notify('미리 작성한 샘플 결과예요. AI 분석이 아닙니다. 다시 누르면 다른 유형을 볼 수 있어요.');
@@ -107,6 +121,7 @@ find('export-json').onclick = () => {
 };
 async function readFile(file) {
   if (!file || busy) return;
+  selectedFile = null; fileCard.hidden = true;
   busy = true; find('file').disabled = true; find('run').disabled = true; find('input-text').disabled = true;
   find('file-status').textContent = `${file.name} · 파일을 확인하고 있어요`;
   try {
@@ -119,7 +134,12 @@ async function readFile(file) {
       if (pageCount > 30) throw new Error('PDF는 30페이지 이하로 나누어 주세요.');
     }
     selectedFile = file; source = { title: file.name }; invalidateResult();
-    find('file-status').textContent = `${file.name} · ${pageCount ? `${pageCount}페이지 · ` : ''}원본을 Claude에 보낼 준비가 됐어요. 표와 이미지도 함께 분석합니다.`;
+    fileIcon.textContent = file.type === 'application/pdf' ? 'PDF' : file.type.split('/')[1].toUpperCase();
+    fileName.textContent = file.name; fileName.title = file.name;
+    const size = file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))}KB` : `${(file.size / (1024 * 1024)).toFixed(1)}MB`;
+    fileMeta.textContent = [size, pageCount ? `${pageCount}페이지` : '', 'Claude 분석 준비 완료'].filter(Boolean).join(' · ');
+    fileCard.hidden = false;
+    find('file-status').textContent = '분석 버튼을 누르면 동의 후 원본 파일을 전송합니다.';
   } catch (error) { selectedFile = null; find('file-status').textContent = error.message || '파일을 읽지 못했어요.'; }
   finally { busy = false; find('file').disabled = false; find('run').disabled = !selectedFile && !find('input-text').value.trim(); find('input-text').disabled = false; }
 }

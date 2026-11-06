@@ -43,6 +43,14 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.reload();
   assert.equal(await page.locator('#task-list .task-card').count(), 0);
+  await page.locator('#file').setInputFiles({ name: 'notice.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ioAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('.selected-file').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('.selected-file-name').textContent(), 'notice.png');
+  assert.match(await page.locator('.selected-file-icon').textContent(), /PNG/);
+  assert.match(await page.locator('.selected-file-meta').textContent(), /Claude 분석 준비 완료/);
+  await page.getByRole('button', { name: '선택한 파일 제거' }).click();
+  assert.equal(await page.locator('.selected-file').isVisible(), false);
+  assert.equal(await page.locator('#run').isDisabled(), true);
   const popup = await context.newPage(); await popup.goto(`chrome-extension://${extensionId}/popup.html`);
   await popup.setViewportSize({ width: 390, height: 780 });
   await popup.locator('body').screenshot({ path: resolve(output, '04-popup.png') });
