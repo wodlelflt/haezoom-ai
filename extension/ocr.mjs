@@ -17,8 +17,9 @@ export async function extractText(file, progress = () => {}) {
     if (file.type !== 'application/pdf') return await recognize(file);
     const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
-    const document = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
     try {
+      const document = await loadingTask.promise;
       if (document.numPages > 30) throw new Error('PDF는 30페이지 이하로 나누어 주세요.');
       const pages = [];
       for (let index = 1; index <= document.numPages; index++) {
@@ -42,6 +43,6 @@ export async function extractText(file, progress = () => {}) {
         pages.push(`--- ${index}페이지 ---\n${text}`); page.cleanup();
       }
       return pages.join('\n\n');
-    } finally { await document.destroy(); }
+    } finally { await loadingTask.destroy(); }
   } finally { if (worker) await worker.terminate(); }
 }
