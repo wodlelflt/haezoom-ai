@@ -1,4 +1,4 @@
-import { analyzeText } from './api.mjs';
+import { analyzeImageDataUrl, analyzeText } from './api.mjs';
 
 const globalOrigins = ['https://*/*', 'http://*/*'];
 let globalQueue = Promise.resolve();
@@ -54,8 +54,13 @@ async function readCapture(image) {
   }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !['selection', 'openWorkspace', 'captureViewport', 'readCapture', 'startCapture', 'analyzeText', 'enableGlobal', 'disableGlobal'].includes(message.type)) return false;
+  if (sender.id !== chrome.runtime.id || !['selection', 'openWorkspace', 'captureViewport', 'readCapture', 'startCapture', 'analyzeText', 'analyzeImage', 'enableGlobal', 'disableGlobal'].includes(message.type)) return false;
   const open = async () => {
+    if (message.type === 'analyzeImage') {
+      const image = message.payload?.image;
+      if (!sender.tab || typeof image !== 'string' || image.length > 12 * 1024 * 1024) throw new Error('분석할 캡쳐 이미지를 확인해 주세요.');
+      return analyzeImageDataUrl(image, message.payload?.context || '');
+    }
     if (message.type === 'analyzeText') {
       if (!sender.tab && !sender.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('확장 프로그램에서 분석을 시작해 주세요.');
       if (sender.tab && !/^(https?|file):/.test(sender.tab.url || '')) throw new Error('웹페이지에서 분석을 시작해 주세요.');

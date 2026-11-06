@@ -72,3 +72,70 @@ test('returns yearless dates unchanged for user review', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('sends uploaded PDFs to Claude as documents with table-reading instructions', async () => {
+  const originalFetch = globalThis.fetch;
+  let anthropicBody;
+  globalThis.fetch = async (_url, options) => {
+    anthropicBody = JSON.parse(options.body);
+    return Response.json({ content: [{ type: 'text', text: JSON.stringify(analysis) }] });
+  };
+  try {
+    const form = new FormData();
+    form.append('file', new File(['%PDF-1.4 sample'], 'notice.pdf', { type: 'application/pdf' }));
+    form.append('context', '표의 금액과 제출일을 확인해 주세요.');
+    const response = await worker.fetch(new Request('https://haezoom.sleepwhale.workers.dev/api/analyze', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '203.0.113.12' },
+      body: form,
+    }), {
+      ANTHROPIC_API_KEY: 'test-secret',
+      CLAUDE_MODEL: 'test-model',
+      RATE_LIMITER: { limit: async () => ({ success: true }) },
+    });
+    assert.equal(response.status, 200);
+    const [documentBlock, promptBlock] = anthropicBody.messages[0].content;
+    assert.equal(documentBlock.type, 'document');
+    assert.equal(documentBlock.source.media_type, 'application/pdf');
+    assert.equal(atob(documentBlock.source.data), '%PDF-1.4 sample');
+    assert.match(promptBlock.text, /행과 열의 연결/);
+    assert.match(promptBlock.text, /표의 금액과 제출일/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('sends uploaded images to Claude as image blocks and rejects mismatched signatures', async () => {
+  const originalFetch = globalThis.fetch;
+  let anthropicBody;
+  globalThis.fetch = async (_url, options) => {
+    anthropicBody = JSON.parse(options.body);
+    return Response.json({ content: [{ type: 'text', text: JSON.stringify(analysis) }] });
+  };
+  try {
+    const form = new FormData();
+    form.append('file', new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'capture.png', { type: 'image/png' }));
+    const response = await worker.fetch(new Request('https://haezoom.sleepwhale.workers.dev/api/analyze', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '203.0.113.13' },
+      body: form,
+    }), {
+      ANTHROPIC_API_KEY: 'test-secret',
+      CLAUDE_MODEL: 'test-model',
+      RATE_LIMITER: { limit: async () => ({ success: true }) },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(anthropicBody.messages[0].content[0].type, 'image');
+    assert.equal(anthropicBody.messages[0].content[0].source.media_type, 'image/png');
+
+    const invalid = new FormData();
+    invalid.append('file', new File(['not a png'], 'fake.png', { type: 'image/png' }));
+    const rejected = await worker.fetch(new Request('https://haezoom.sleepwhale.workers.dev/api/analyze', {
+      method: 'POST',
+      body: invalid,
+    }), { ANTHROPIC_API_KEY: 'test-secret', RATE_LIMITER: { limit: async () => ({ success: true }) } });
+    assert.equal(rejected.status, 400);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

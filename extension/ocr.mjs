@@ -1,3 +1,11 @@
+export async function getPdfPageCount(file) {
+  const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() });
+  try { return (await loadingTask.promise).numPages; }
+  finally { await loadingTask.destroy(); }
+}
+
 export async function extractText(file, progress = () => {}) {
   if (!['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('PDF, PNG, JPG, WEBP 파일을 선택해 주세요.');
   if (file.size > 20 * 1024 * 1024) throw new Error('20MB 이하 파일을 선택해 주세요.');

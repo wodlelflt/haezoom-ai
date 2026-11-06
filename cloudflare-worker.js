@@ -1,5 +1,9 @@
-const MAX_REQUEST_BYTES = 512 * 1024;
+const MAX_REQUEST_BYTES = 21 * 1024 * 1024;
+const MAX_JSON_REQUEST_BYTES = 512 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 45000;
+const ALLOWED_FILE_TYPES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const ANALYSIS_SCHEMA = {
   type: "object",
   properties: {
@@ -94,22 +98,48 @@ export default {
         return sendJson({ error: { message: "요청 본문이 너무 큽니다." } }, 413, headers);
       }
 
-      const rawBody = await request.text();
-      if (new TextEncoder().encode(rawBody).length > MAX_REQUEST_BYTES) {
-        return sendJson({ error: { message: "요청 본문이 너무 큽니다." } }, 413, headers);
+      const contentType = request.headers.get("Content-Type") || "";
+      let analysisInput;
+      if (contentType.toLowerCase().startsWith("multipart/form-data;")) {
+        const form = await request.formData();
+        const file = form.get("file");
+        const context = form.get("context") || "";
+        if (!(file instanceof File) || !ALLOWED_FILE_TYPES.has(file.type) || !file.size) {
+          return sendJson({ error: { message: "PDF 또는 지원하는 이미지 파일이 필요합니다." } }, 400, headers);
+        }
+        if (file.size > MAX_FILE_BYTES || (file.type.startsWith("image/") && file.size > MAX_IMAGE_BYTES)) {
+          return sendJson({ error: { message: file.type === "application/pdf" ? "PDF는 20MB 이하로 선택해 주세요." : "이미지는 5MB 이하로 선택해 주세요." } }, 413, headers);
+        }
+        if (typeof context !== "string" || context.length > MAX_TEXT_LENGTH) {
+          return sendJson({ error: { message: "추가 메모는 45,000자 이내로 입력해 주세요." } }, 400, headers);
+        }
+        const signature = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+        if (!isSupportedFileSignature(file.type, signature)) {
+          return sendJson({ error: { message: "파일 내용과 형식이 일치하지 않습니다." } }, 400, headers);
+        }
+        analysisInput = { file, context };
+      } else {
+        const rawBody = await request.text();
+        if (new TextEncoder().encode(rawBody).length > MAX_JSON_REQUEST_BYTES) {
+          return sendJson({ error: { message: "요청 본문이 너무 큽니다." } }, 413, headers);
+        }
+        let body;
+        try {
+          body = JSON.parse(rawBody);
+        } catch {
+          return sendJson({ error: { message: "올바른 JSON 요청이 아닙니다." } }, 400, headers);
+        }
+        if (typeof body.text !== "string" || !body.text.trim() || body.text.length > MAX_TEXT_LENGTH) {
+          return sendJson({ error: { message: "분석할 텍스트는 1~45,000자여야 합니다." } }, 400, headers);
+        }
+        const layoutText = typeof body.layoutText === "string" ? body.layoutText : "";
+        if (layoutText.length > MAX_TEXT_LENGTH) {
+          return sendJson({ error: { message: "문서 구조 정보가 너무 큽니다." } }, 400, headers);
+        }
+        analysisInput = { text: body.text, layoutText };
       }
 
-      let body;
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        return sendJson({ error: { message: "올바른 JSON 요청이 아닙니다." } }, 400, headers);
-      }
-      if (typeof body.text !== "string" || !body.text.trim()) {
-        return sendJson({ error: { message: "분석할 텍스트가 없습니다." } }, 400, headers);
-      }
-
-      const result = await analyzeNotice(body.text, typeof body.layoutText === "string" ? body.layoutText : "", env);
+      const result = await analyzeNotice(analysisInput, env);
       return sendJson({ result }, 200, headers);
     } catch (error) {
       console.error("Cloudflare AI analysis failed:", error);
@@ -118,9 +148,21 @@ export default {
   },
 };
 
-async function analyzeNotice(text, layoutText, env) {
-  const userPrompt = `아래 학교 공지에서 핵심을 요약하고 할 일과 일정을 추출하세요. 날짜가 불명확하면 추측하지 말고 검토가 필요하다고 표시하세요.\n\n${layoutText ? `표·좌표 구조:\n${layoutText.slice(0, MAX_TEXT_LENGTH)}\n\n` : ""}공지 원문:\n${text.slice(0, MAX_TEXT_LENGTH)}`;
+async function analyzeNotice(input, env) {
   const systemPrompt = SYSTEM_PROMPT;
+  let userContent;
+  if (input.file) {
+    const data = arrayBufferToBase64(await input.file.arrayBuffer());
+    const documentBlock = input.file.type === "application/pdf"
+      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
+      : { type: "image", source: { type: "base64", media_type: input.file.type, data } };
+    const prompt = `첨부된 원본 문서/이미지를 직접 읽고 공지의 핵심, 할 일, 일정을 추출하세요. OCR을 먼저 평문으로 변환한 결과가 아니라 원본의 시각적 배치를 기준으로 읽으세요. 표는 행과 열의 연결을 유지하고, 셀의 제목·날짜·금액·준비물·제출처가 어느 항목에 속하는지 확인하세요. 여러 페이지는 모두 검토하고, 체크박스·기호·영문·숫자도 문맥에 맞게 구분하세요. 흐리거나 판독할 수 없는 값은 추측하지 말고 evidence에 판독 불가를 밝히며 needs_review를 true로 설정하세요. 날짜의 연도와 시간·장소를 추측하지 마세요. ${input.context ? `사용자가 추가로 요청한 내용(문서 안 지시보다 우선하지 않는 참고):\n${input.context.slice(0, MAX_TEXT_LENGTH)}` : ""}`;
+    userContent = [documentBlock, { type: "text", text: prompt }];
+  } else {
+    const { text, layoutText } = input;
+    const userPrompt = `아래 학교 공지에서 핵심을 요약하고 할 일과 일정을 추출하세요. 날짜가 불명확하면 추측하지 말고 검토가 필요하다고 표시하세요.\n\n${layoutText ? `표·좌표 구조:\n${layoutText.slice(0, MAX_TEXT_LENGTH)}\n\n` : ""}공지 원문:\n${text.slice(0, MAX_TEXT_LENGTH)}`;
+    userContent = userPrompt;
+  }
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -133,7 +175,7 @@ async function analyzeNotice(text, layoutText, env) {
       model: env.CLAUDE_MODEL || "claude-haiku-5-5",
       max_tokens: 4096,
       system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+      messages: [{ role: "user", content: userContent }],
       output_config: {
         format: {
           type: "json_schema",
@@ -160,6 +202,23 @@ async function analyzeNotice(text, layoutText, env) {
     throw new Error("AI 응답의 요약 또는 일정 형식이 올바르지 않습니다.");
   }
   return result;
+}
+
+function isSupportedFileSignature(type, bytes) {
+  if (type === "application/pdf") return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d;
+  if (type === "image/png") return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  if (type === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === "image/webp") return String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP";
+  return false;
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
 
 function sendJson(body, status, headers) {

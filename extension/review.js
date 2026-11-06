@@ -28,9 +28,9 @@
     const zoomImageWrap = create('div', '', 'image-wrap');
     const zoomImage = create('img'); zoomImage.alt = '선택한 캡쳐 영역 전체 보기'; if (image) zoomImage.src = image; zoomImageWrap.append(zoomImage); zoom.append(zoomHeader, zoomImageWrap);
     const columns = create('div', '', `columns${image ? '' : ' text-only'}`);
-    const status = create('p', image ? '이미지를 확인한 뒤 글자 읽기를 눌러 주세요.' : '가져온 문장을 확인하고 필요한 부분을 수정해 주세요.'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-    const editor = create('div', '', 'pane'); const label = create('label', '읽어온 내용'); label.htmlFor = 'haezoom-review-text';
-    const text = create('textarea'); text.id = label.htmlFor; text.maxLength = 45000; text.placeholder = image ? '글자 읽기를 누르거나 직접 입력해 주세요.' : '내용을 확인하고 수정해 주세요.'; text.value = initialText;
+    const status = create('p', image ? '이미지를 확인하고 Claude에게 바로 분석을 요청할 수 있어요.' : '가져온 문장을 확인하고 수정해 주세요.'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const editor = create('div', '', 'pane'); const label = create('label', image ? '추가 요청 사항 (선택)' : '가져온 내용'); label.htmlFor = 'haezoom-review-text';
+    const text = create('textarea'); text.id = label.htmlFor; text.maxLength = 45000; text.placeholder = image ? '표나 특정 항목에서 특히 확인할 내용이 있으면 적어 주세요.' : '내용을 확인하고 수정해 주세요.'; text.value = initialText;
     const copy = create('button', '내용 복사'); copy.onclick = async () => { try { await navigator.clipboard.writeText(text.value); status.textContent = '내용을 복사했어요.'; } catch { text.focus(); text.select(); status.textContent = '내용을 선택했어요. ⌘C 또는 Ctrl+C로 복사해 주세요.'; } };
     const analysisOutput = create('section'); analysisOutput.hidden = true; analysisOutput.setAttribute('aria-live', 'polite'); analysisOutput.style.cssText = 'max-height:180px;overflow:auto;padding:12px;border:1px solid #e5e7eb;border-radius:12px;background:#fafafa;';
     const renderAnalysis = result => {
@@ -56,12 +56,17 @@
     const analyze = create('button', '할 일 정리하기', 'primary');
     analyze.onclick = async () => {
       const value = text.value.trim();
-      if (!value) { status.textContent = '분석할 원문을 입력해 주세요.'; text.focus(); return; }
+        if (!image && !value) { status.textContent = '분석할 원문을 입력해 주세요.'; text.focus(); return; }
       if (value.length > 45000) { status.textContent = '원문은 45,000자 이내여야 해요.'; return; }
-      if (!confirm('원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?')) return;
-      analyze.disabled = true; status.textContent = '원문을 전송하고 분석하고 있어요.';
+      const consent = image
+        ? '선택한 캡쳐 이미지와 추가 요청 사항을 해줌 Cloudflare Worker를 거쳐 Claude API로 전송합니다. 이미지에 개인정보가 없는지 확인하고 동의해 주세요.'
+        : '원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?';
+      if (!confirm(consent)) return;
+      analyze.disabled = true; status.textContent = image ? '캡쳐 이미지를 Claude에 보내 분석하고 있어요.' : '원문을 전송하고 분석하고 있어요.';
       try {
-        const response = await chrome.runtime.sendMessage({ type: 'analyzeText', payload: { text: value } });
+        const response = await chrome.runtime.sendMessage(image
+          ? { type: 'analyzeImage', payload: { image, context: value } }
+          : { type: 'analyzeText', payload: { text: value } });
         if (!response?.ok) throw new Error(response?.error || '분석에 실패했어요.');
         renderAnalysis(response.data); status.textContent = '분석이 완료됐어요. 원문과 결과를 확인해 주세요.';
       } catch (error) {
@@ -75,22 +80,9 @@
       const enlarge = create('button', '크게 보기 ↗'); enlarge.onclick = () => { zoom.hidden = false; zoomBack.focus(); }; zoomBack.onclick = () => { zoom.hidden = true; enlarge.focus(); }; imageHeading.append(enlarge); imagePane.append(imageHeading);
       const imageWrap = create('div', '', 'image-wrap'); const screenshot = create('img'); screenshot.src = image; screenshot.alt = '선택한 캡쳐 영역'; imageWrap.append(screenshot);
       const read = create('button', '캡쳐한 글자 읽기', 'primary');
-      read.onclick = async () => {
-        read.disabled = true; read.textContent = '글자를 읽고 있어요…'; status.textContent = '처음에는 언어 데이터를 준비하느라 잠시 걸릴 수 있어요.';
-        try {
-          const result = await chrome.runtime.sendMessage({ type: 'readCapture', payload: { image } });
-          if (controller.signal.aborted) return;
-          if (!result?.ok || typeof result.data !== 'string') throw new Error(result?.error || '글자를 읽지 못했어요.');
-          text.value = result.data.slice(0, 45000);
-          status.textContent = text.value.trim() ? '글자를 읽었어요. 원문과 비교해 틀린 부분을 수정해 주세요.' : '글자를 찾지 못했어요. 다른 영역을 선택하거나 직접 입력해 주세요.';
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          status.textContent = /context invalidated/i.test(error.message) ? '해줌이 업데이트되었어요. 창을 닫고 페이지를 새로고침해 주세요.' : `${error.message} 다시 시도하거나 직접 입력해 주세요.`;
-        } finally { read.disabled = false; read.textContent = '캡쳐한 글자 읽기'; }
-      };
-      imagePane.append(imageWrap, read); columns.append(imagePane);
+        imagePane.append(imageWrap); columns.append(imagePane);
     }
-    columns.append(editor); body.append(heading, columns, analysisOutput, status, create('p', image ? '캡쳐 이미지는 전송하지 않아요. 분석 동의 후 OCR 텍스트를 Claude에 전송합니다.' : '분석 동의 후 원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude에 전송합니다.', 'note'));
+    columns.append(editor); body.append(heading, columns, analysisOutput, status, create('p', image ? '분석 동의 후 캡쳐 이미지 자체를 Claude에 전송합니다. 이미지 속 개인정보를 확인해 주세요.' : '분석 동의 후 원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude에 전송합니다.', 'note'));
     panel.append(header, body, zoom); backdrop.append(panel); shadow.prepend(style); shadow.append(backdrop); document.documentElement.append(host);
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); if (!zoom.hidden) zoomBack.click(); else cleanup(); }

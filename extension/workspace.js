@@ -1,13 +1,19 @@
 import { makeItems, validDate } from './core.mjs';
 import { samples } from './samples.mjs';
-import { extractText } from './ocr.mjs';
-import { analyzeText } from './api.mjs';
+import { getPdfPageCount } from './ocr.mjs';
+import { analyzeDocument, analyzeText } from './api.mjs';
 
 const find = id => document.getElementById(id);
-let items = []; let draft = []; let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false;
+let items = []; let draft = []; let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null;
+document.querySelector('label[for="input-text"]').textContent = '내용 입력 또는 파일 추가 메모 (선택)';
+find('input-text').placeholder = '파일 없이 공지 내용을 입력하거나, 원본 파일을 선택한 뒤 확인할 내용을 메모할 수 있어요.';
+find('drop').querySelector('span').textContent = 'PDF 최대 20MB · 30페이지 · 이미지 최대 5MB';
+const settingsNotes = document.querySelectorAll('#settings .settings-panel p');
+settingsNotes[0].textContent = '캡쳐 이미지는 페이지에서 영역을 먼저 확인한 뒤, 분석 동의 시 이미지 자체를 Cloudflare Worker를 거쳐 Claude로 전송합니다. 선택 문장은 텍스트로 전송합니다.';
+settingsNotes[1].textContent = 'AI 분석은 Claude에 직접 연결됩니다. PDF·이미지는 로컬 OCR을 거치지 않고 원본을 보내 표와 문서 배치를 함께 분석합니다. 영구 저장, 알림, 캘린더는 미연결이며 결과 목록은 새로고침하면 초기화됩니다.';
 const notify = text => { find('status').textContent = text; };
 function invalidateResult() { draft = []; find('analysis-result').hidden = true; find('result-empty').hidden = false; find('save').disabled = true; }
-find('input-text').addEventListener('input', () => { invalidateResult(); source = { title: '입력한 문서' }; });
+find('input-text').addEventListener('input', () => { invalidateResult(); if (!selectedFile) source = { title: '입력한 문서' }; });
 function route() {
   const target = ['analyze', 'tasks', 'settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'analyze';
   document.body.dataset.view = target;
@@ -66,6 +72,7 @@ function showDraft(result, sample = false) {
   if (!draft.length) find('draft-list').append(node('p', '이 문서에는 해야 할 일이나 날짜가 있는 일정이 없어요.', 'muted'));
 }
 find('sample').onclick = () => {
+  selectedFile = null; find('file').value = ''; find('file-status').textContent = '';
   const sample = samples[sampleIndex++ % samples.length]; find('input-text').value = sample.text; source = { title: `가상 샘플 문서 ${(sampleIndex - 1) % samples.length + 1}` };
   showDraft(sample.result, true);
   notify('미리 작성한 샘플 결과예요. AI 분석이 아닙니다. 다시 누르면 다른 유형을 볼 수 있어요.');
@@ -73,13 +80,17 @@ find('sample').onclick = () => {
 find('save').onclick = () => { let added = 0; for (const item of draft) if (!items.some(old => old.title === item.title && old.date === item.date && old.source?.title === item.source?.title)) { items.push(structuredClone(item)); added++; } location.hash = 'tasks'; renderItems(); notify(`${added}개를 미리보기 목록에 담았어요. 새로고침하면 초기화됩니다.`); };
 find('run').onclick = async () => {
   const text = find('input-text').value.trim();
-  if (!text) { notify('정리할 내용을 붙여 넣거나 파일을 선택해 주세요.'); find('input-text').focus(); return; }
+  if (!selectedFile && !text) { notify('정리할 내용을 붙여 넣거나 파일을 선택해 주세요.'); find('input-text').focus(); return; }
+  if (text.length > 45000) { notify('추가 메모는 45,000자 이내로 입력해 주세요.'); find('input-text').focus(); return; }
   if (busy) return;
-  if (!confirm('원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?')) return;
+  const consent = selectedFile
+    ? '선택한 원본 PDF/이미지와 추가 메모를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?'
+    : '입력한 원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?';
+  if (!confirm(consent)) return;
   busy = true; find('run').disabled = true; find('sample').disabled = true; find('input-text').disabled = true; invalidateResult();
-  notify('원문을 전송하고 분석하고 있어요.');
+  notify(selectedFile ? '원본 문서와 표를 Claude가 읽고 분석하고 있어요.' : '원문을 전송하고 분석하고 있어요.');
   try {
-    showDraft(await analyzeText(text), false);
+    showDraft(selectedFile ? await analyzeDocument(selectedFile, text) : await analyzeText(text), false);
     notify('분석이 완료됐어요. 원문과 결과를 확인해 주세요.');
   } catch (error) {
     notify(`분석에 실패했어요. ${error.message}`);
@@ -97,14 +108,20 @@ find('export-json').onclick = () => {
 async function readFile(file) {
   if (!file || busy) return;
   busy = true; find('file').disabled = true; find('run').disabled = true; find('input-text').disabled = true;
-  find('file-status').textContent = `${file.name} · 문서를 읽고 있어요`;
+  find('file-status').textContent = `${file.name} · 파일을 확인하고 있어요`;
   try {
-    const text = await extractText(file, message => { find('file-status').textContent = `${file.name} · ${message}`; });
-    if (!text.trim()) throw new Error('읽을 수 있는 글자가 없어요. 선명한 파일을 선택해 주세요.');
-    if (text.length > 45000) throw new Error('45,000자를 넘는 문서예요. 문서를 나누어 다시 선택해 주세요.');
-    invalidateResult(); find('input-text').value = text; source = { title: file.name }; find('file-status').textContent = `${file.name} · ${text.length.toLocaleString()}자를 읽었어요. 인식된 내용을 확인해 주세요.`;
-  } catch (error) { find('file-status').textContent = error.message.includes('fetch') ? 'OCR 언어 데이터를 내려받지 못했어요. 인터넷 연결을 확인하거나 내용을 직접 붙여 넣어 주세요.' : error.message; }
-  finally { busy = false; find('file').disabled = false; find('run').disabled = false; find('input-text').disabled = false; }
+    if (!['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('PDF, PNG, JPG, WEBP 파일을 선택해 주세요.');
+    if (!file.size || file.size > 20 * 1024 * 1024) throw new Error('20MB 이하 파일을 선택해 주세요.');
+    if (file.type.startsWith('image/') && file.size > 5 * 1024 * 1024) throw new Error('이미지는 5MB 이하로 선택해 주세요.');
+    let pageCount;
+    if (file.type === 'application/pdf') {
+      pageCount = await getPdfPageCount(file);
+      if (pageCount > 30) throw new Error('PDF는 30페이지 이하로 나누어 주세요.');
+    }
+    selectedFile = file; source = { title: file.name }; invalidateResult();
+    find('file-status').textContent = `${file.name} · ${pageCount ? `${pageCount}페이지 · ` : ''}원본을 Claude에 보낼 준비가 됐어요. 표와 이미지도 함께 분석합니다.`;
+  } catch (error) { selectedFile = null; find('file-status').textContent = error.message || '파일을 읽지 못했어요.'; }
+  finally { busy = false; find('file').disabled = false; find('run').disabled = !selectedFile && !find('input-text').value.trim(); find('input-text').disabled = false; }
 }
 find('file').onchange = event => readFile(event.target.files[0]);
 for (const type of ['dragenter', 'dragover']) find('drop').addEventListener(type, event => { event.preventDefault(); find('drop').classList.add('dragging'); });

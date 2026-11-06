@@ -48,6 +48,7 @@ try {
   await popup.locator('body').screenshot({ path: resolve(output, '04-popup.png') });
   const selectionPage = await context.newPage();
   await selectionPage.route('https://school.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="ko"><meta charset="utf-8"><title>학교 공지</title><body style="font:20px sans-serif;padding:80px;line-height:2"><h1>현장체험학습 안내</h1><p id="notice">2026년 11월 12일까지 참가 신청서를 담임 선생님께 제출해 주세요. 참가비는 15,000원입니다.</p><textarea aria-label="입력창">비공개 입력 중인 내용</textarea></body></html>' }));
+  selectionPage.on('dialog', dialog => dialog.accept());
   await selectionPage.goto('https://school.example/notice');
   await selectionPage.evaluate(() => { globalThis.chrome = { runtime: { sendMessage: async message => { globalThis.lastMessage = message; return { ok: true }; }, onMessage: { addListener() {}, removeListener() {} } } }; });
   await selectionPage.addScriptTag({ content: await readFile(resolve(extension, 'selection-helper.js'), 'utf8') });
@@ -137,7 +138,12 @@ try {
   const frame = 'data:image/png;base64,' + (await selectionPage.screenshot()).toString('base64');
   await selectionPage.evaluate(frame => {
     globalThis.captureMessages = [];
-    chrome.runtime.sendMessage = async message => { globalThis.captureMessages.push(message); return message.type === 'captureViewport' ? { ok: true, data: frame } : { ok: true, data: '11월 12일까지 참가 신청서를 제출해 주세요.' }; };
+    chrome.runtime.sendMessage = async message => {
+      globalThis.captureMessages.push(message);
+      if (message.type === 'captureViewport') return { ok: true, data: frame };
+      if (message.type === 'analyzeImage') return { ok: true, data: { summary: '캡쳐 분석 결과', tasks: [], schedules: [] } };
+      return { ok: false, error: 'Unexpected capture message' };
+    };
   }, frame);
   await selectionPage.addScriptTag({ content: await readFile(resolve(extension, 'review.js'), 'utf8') });
   await selectionPage.addScriptTag({ content: await readFile(resolve(extension, 'capture.js'), 'utf8') });
@@ -149,17 +155,18 @@ try {
   await selectionPage.screenshot({ path: resolve(output, '08-capture-preview.png'), fullPage: true });
   assert.equal(await selectionPage.evaluate(() => captureMessages.filter(message => message.type === 'readCapture').length), 0);
   await clickClosedButton('이 캡쳐 가져오기');
-  assert.ok(await buttonByName('캡쳐한 글자 읽기'), 'review controls appear without loading another document');
+  assert.equal(await buttonByName('캡쳐한 글자 읽기'), undefined, 'capture review skips local OCR');
   assert.equal(selectionPage.frames().length, 1, 'review does not create an iframe');
   await selectionPage.screenshot({ path: resolve(output, '10-inline-capture.png'), fullPage: true });
-  await clickClosedButton('캡쳐한 글자 읽기');
-  const tree = (await cdp.send('Accessibility.getFullAXTree')).nodes;
-  const textbox = tree.find(node => node.role?.value === 'textbox' && node.name?.value === '읽어온 내용' && !node.ignored);
-  assert.equal(textbox.value.value, '11월 12일까지 참가 신청서를 제출해 주세요.');
+  assert.ok((await cdp.send('Accessibility.getFullAXTree')).nodes.some(node => node.role?.value === 'textbox' && node.name?.value === '추가 요청 사항 (선택)' && !node.ignored));
   await clickClosedButton('할 일 정리하기');
-  assert.ok((await cdp.send('Accessibility.getFullAXTree')).nodes.some(node => node.name?.value?.includes('AI 분석은 아직 연결 전')));
+  const imageRequest = await selectionPage.evaluate(() => captureMessages.find(message => message.type === 'analyzeImage'));
+  assert.ok(imageRequest?.payload?.image.startsWith('data:image/png;base64,'));
+  assert.equal(imageRequest.payload.context, '');
+  const tree = (await cdp.send('Accessibility.getFullAXTree')).nodes;
+  assert.ok(tree.some(node => node.name?.value === '캡쳐 분석 결과'));
   const captureSize = await selectionPage.evaluate(async () => {
-    const image = new Image(); image.src = captureMessages.find(message => message.type === 'readCapture').payload.image; await image.decode(); return [image.naturalWidth, image.naturalHeight];
+    const image = new Image(); image.src = captureMessages.find(message => message.type === 'analyzeImage').payload.image; await image.decode(); return [image.naturalWidth, image.naturalHeight];
   });
   assert.deepEqual(captureSize, [500, 250]);
   await selectionPage.screenshot({ path: resolve(output, '11-inline-capture-text.png'), fullPage: true });
@@ -189,5 +196,5 @@ try {
     await clickClosedButton('확인 창 닫기');
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: real extension workspace, samples/tasks/edit/filter/reset, single-screen document flow at 3 desktop sizes. Mock runtime UI: selection, drag/menu boundaries, expired context, 500x250 crop, no-iframe review/OCR response, close/Esc, wide/tall contain + full-image view.');
+  console.log('PASS: real extension workspace, samples/tasks/edit/filter/reset, single-screen document flow at 3 desktop sizes. Mock runtime UI: selection, drag/menu boundaries, expired context, 500x250 crop, no-iframe direct-image analysis without local OCR, close/Esc, wide/tall contain + full-image view.');
 } finally { await context.close(); }
