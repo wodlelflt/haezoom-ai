@@ -25,9 +25,15 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 683 });
   await page.screenshot({ path: resolve(output, '01-document.png'), fullPage: true });
-  await page.getByRole('button', { name: '할 일 화면으로 가져가기' }).click();
-  await page.locator('#task-list .task-card').nth(1).waitFor();
-  assert.equal(await page.locator('#task-list .task-card').count(), 2);
+  const draftSelections = page.locator('#draft-list input[type=checkbox]');
+  assert.equal(await draftSelections.count(), 2);
+  await draftSelections.nth(1).uncheck();
+  await draftSelections.nth(0).uncheck();
+  assert.equal(await page.getByRole('button', { name: '저장할 항목을 선택해 주세요' }).isDisabled(), true);
+  await draftSelections.nth(0).check();
+  await page.getByRole('button', { name: '선택한 1개를 내 할 일로 가져가기' }).click();
+  await page.locator('#task-list .task-card').first().waitFor();
+  assert.equal(await page.locator('#task-list .task-card').count(), 1);
   const first = page.locator('#task-list .task-card').first();
   await first.getByRole('button', { name: '날짜·내용 확인' }).click();
   await first.getByLabel('확인한 날짜').fill('2026-11-13');
@@ -45,8 +51,8 @@ try {
   await page.screenshot({ path: resolve(output, '03-mobile.png'), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.reload();
-  await page.locator('#task-list .task-card').nth(1).waitFor();
-  assert.equal(await page.locator('#task-list .task-card').count(), 2);
+  await page.locator('#task-list .task-card').first().waitFor();
+  assert.equal(await page.locator('#task-list .task-card').count(), 1);
   await page.locator('#filter').selectOption('completed');
   assert.equal(await page.locator('#task-list .task-card').count(), 1);
   await page.locator('#filter').selectOption('all');
