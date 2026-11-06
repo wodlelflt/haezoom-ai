@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GoogleCalendarError, googleEventId, makeGoogleEvent, syncGoogleEvent } from '../extension/calendar.mjs';
+import { eligibleForCalendar, GoogleCalendarError, googleEventId, makeGoogleEvent, syncGoogleEvent } from '../extension/calendar.mjs';
 
 const item = {
   id: '00112233-4455-4677-8899-aabbccddeeff',
@@ -32,6 +32,21 @@ test('한국 시간으로 확인된 행사 시간과 상세 정보를 Calendar �
   assert.match(event.description, /원문 근거:/);
 });
 
+test('날짜가 있는 일정은 원문 확인 없이 바로 캘린더에 등록할 수 있다', () => {
+  const schedule = { ...item, confirmed: false, needs_review: true };
+  assert.equal(eligibleForCalendar(schedule), true);
+  assert.deepEqual(makeGoogleEvent(schedule).start, { dateTime: '2026-11-18T05:30:00.000Z' });
+  assert.equal(eligibleForCalendar({ ...schedule, completed: true }), false);
+  assert.equal(eligibleForCalendar({ ...schedule, date: null }), false);
+});
+
+test('할 일은 기존처럼 확인 완료 후에만 캘린더에 등록할 수 있다', () => {
+  const task = { ...item, kind: 'task', confirmed: false, needs_review: true };
+  assert.equal(eligibleForCalendar(task), false);
+  assert.throws(() => makeGoogleEvent(task));
+  assert.equal(eligibleForCalendar({ ...task, confirmed: true, needs_review: false }), true);
+});
+
 test('할 일 또는 시간을 해석할 수 없는 일정은 종일 일정으로 만든다', () => {
   const task = makeGoogleEvent({ ...item, kind: 'task', date: '2026-12-31' });
   assert.deepEqual(task.start, { date: '2026-12-31' });
@@ -40,13 +55,10 @@ test('할 일 또는 시간을 해석할 수 없는 일정은 종일 일정으�
   assert.deepEqual(unknownTime.start, { date: item.date });
 });
 
-test('미확인, 검토 필요, 완료, 잘못된 날짜는 Calendar에 보낼 수 없다', () => {
-  for (const change of [
-    { confirmed: false },
-    { needs_review: true },
-    { completed: true },
-    { date: '11월 18일' }
-  ]) assert.throws(() => makeGoogleEvent({ ...item, ...change }));
+test('완료 또는 잘못된 날짜의 일정은 Calendar에 보낼 수 없다', () => {
+  for (const change of [{ completed: true }, { date: '11월 18일' }]) {
+    assert.throws(() => makeGoogleEvent({ ...item, ...change }));
+  }
 });
 
 test('기존 이벤트는 PATCH로 갱신하고 없는 이벤트는 고정 ID로 생성한다', async () => {

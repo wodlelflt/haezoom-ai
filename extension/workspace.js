@@ -3,6 +3,7 @@ import { samples } from './samples.mjs';
 import { getPdfPageCount } from './ocr.mjs';
 import { analyzeDocument, analyzeText } from './api.mjs';
 import { mergeItems } from './item-store.mjs';
+import { eligibleForCalendar } from './calendar.mjs';
 
 const find = id => document.getElementById(id);
 let items = []; let draft = []; let selectedDraftIds = new Set(); let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null; let calendarConnected = false; let syncingCalendar = false;
@@ -10,11 +11,11 @@ find('save').textContent = '할 일 화면으로 가져가기';
 document.querySelector('#analysis-result > .tiny').textContent = '할 일은 이 Chrome 프로필에 저장됩니다.';
 document.querySelector('#tasks .hero .muted').textContent = '확인한 항목은 이 Chrome 프로필에 저장하고, 원하는 일정만 Google Calendar에 동기화할 수 있어요.';
 document.querySelector('#tasks .privacy').textContent = '해줌에서 항목을 완료하거나 삭제해도 이미 등록한 Google Calendar 일정은 유지됩니다. Google Calendar에서 별도로 관리해 주세요.';
-document.querySelector('#tasks > p.tiny').textContent = 'Google 계정을 연결한 뒤, 원문과 날짜를 확인 완료한 미완료 항목만 동기화할 수 있습니다.';
+document.querySelector('#tasks > p.tiny').textContent = 'Google 계정을 연결한 뒤, 날짜가 있는 일정은 바로, 할 일은 원문과 날짜를 확인 완료한 뒤 동기화할 수 있습니다.';
 const syncButton = find('export-ics');
 syncButton.id = 'sync-calendar';
-syncButton.textContent = '확인한 일정 동기화';
-syncButton.title = '확인 완료했고 유효한 날짜가 있는 미완료 항목을 Google Calendar에 동기화합니다.';
+syncButton.textContent = '일정 동기화';
+syncButton.title = '날짜가 있는 일정과 확인 완료한 할 일을 Google Calendar에 동기화합니다.';
 const connectButton = document.createElement('button');
 connectButton.id = 'connect-calendar';
 connectButton.className = 'secondary';
@@ -51,7 +52,7 @@ find('input-text').placeholder = '파일 없이 공지 내용을 입력하거나
 find('drop').querySelector('span').textContent = 'PDF 최대 20MB · 30페이지 · 이미지 최대 5MB';
 const settingsNotes = document.querySelectorAll('#settings .settings-panel p');
 settingsNotes[0].textContent = '캡쳐 이미지는 페이지에서 영역을 먼저 확인한 뒤, 분석 동의 시 이미지 자체를 Cloudflare Worker를 거쳐 Claude로 전송합니다. 선택 문장은 텍스트로 전송합니다.';
-settingsNotes[1].textContent = 'AI 분석은 Claude에 연결되고, 할 일은 이 Chrome 프로필에 저장됩니다. Google Cloud Console에서 Calendar API를 사용 설정하고, OAuth 클라이언트를 Chrome Extension 유형으로 만든 뒤 현재 확장 프로그램 ID를 등록해야 로그인할 수 있습니다. Google 로그인 후 확인한 날짜가 있는 미완료 항목만 직접 동기화하세요. Calendar 일정은 해줌에서 항목을 완료하거나 삭제해도 자동으로 삭제되지 않습니다.';
+settingsNotes[1].textContent = 'AI 분석은 Claude에 연결되고, 할 일은 이 Chrome 프로필에 저장됩니다. Google Cloud Console에서 Calendar API를 사용 설정하고, OAuth 클라이언트를 Chrome Extension 유형으로 만든 뒤 현재 확장 프로그램 ID를 등록해야 로그인할 수 있습니다. Google 로그인 후 날짜가 있는 일정이나 확인 완료한 할 일만 직접 동기화하세요. Calendar 일정은 해줌에서 항목을 완료하거나 삭제해도 자동으로 삭제되지 않습니다.';
 const uploadStyles = document.createElement('link'); uploadStyles.rel = 'stylesheet'; uploadStyles.href = new URL('./file-upload.css', import.meta.url).href; document.head.append(uploadStyles);
 const fileCard = document.createElement('div'); fileCard.className = 'selected-file'; fileCard.hidden = true;
 const fileIcon = document.createElement('span'); fileIcon.className = 'selected-file-icon';
@@ -141,7 +142,7 @@ function card(item, editable = false, selectable = false) {
     try { items = await request('deleteItem', { id: item.id }); renderItems(); notify('해줌 목록에서 삭제했어요. Google Calendar 일정은 별도로 관리해 주세요.'); }
     catch (error) { notify(error.message); }
   }));
-  const eligible = item.confirmed && !item.needs_review && !item.completed && validDate(item.date);
+  const eligible = eligibleForCalendar(item);
   const calendar = button(!calendarConnected ? 'Google 연결 필요' : eligible ? (item.calendarEventId ? '캘린더 업데이트' : '캘린더 등록') : '날짜 확인 후 등록', async () => {
     if (!eligible || syncingCalendar) return;
     if (!confirm(`“${item.title}”와 날짜, 상세 내용 및 근거를 Google Calendar에 ${item.calendarEventId ? '동기화' : '등록'}할까요?`)) return;
@@ -173,7 +174,7 @@ function renderItems() {
   find('task-list').replaceChildren(...visible.map(item => card(item, true)));
   if (!visible.length) find('task-list').append(node('p', items.length ? '조건에 맞는 할 일이 없어요.' : '아직 가져온 항목이 없어요. 문서 정리에서 샘플을 먼저 둘러보세요.', 'empty'));
 }
-function eligibleForUi(item) { return item.confirmed && !item.needs_review && !item.completed && validDate(item.date); }
+function eligibleForUi(item) { return eligibleForCalendar(item); }
 find('filter').onchange = renderItems; find('search').oninput = renderItems;
 function showDraft(result, sample = false) {
   draft = makeItems(result, source);
@@ -257,7 +258,7 @@ find('connect-calendar').onclick = async () => {
       notify('Google 로그인 창을 여는 중이에요. 계정을 선택하고 권한을 허용해 주세요.');
       const auth = await chrome.identity.getAuthToken({ interactive: true });
       if (!auth?.token) throw new Error('Google 인증 토큰을 받지 못했어요.');
-      calendarConnected = true; renderItems(); notify('Google 캘린더가 연결됐어요. 확인 완료한 날짜만 직접 동기화할 수 있습니다.');
+      calendarConnected = true; renderItems(); notify('Google 캘린더가 연결됐어요. 날짜가 있는 일정과 확인 완료한 할 일을 동기화할 수 있습니다.');
     }
   } catch (error) { notify(`Google 캘린더 연결에 실패했어요. ${error.message || 'Google Cloud OAuth 설정과 확장 프로그램 ID를 확인해 주세요.'}`); }
   finally { button.disabled = false; }
@@ -265,9 +266,9 @@ find('connect-calendar').onclick = async () => {
 find('sync-calendar').onclick = async () => {
   if (syncingCalendar) return;
   const eligible = items.filter(eligibleForUi);
-  if (!eligible.length) return notify('먼저 항목의 제목과 날짜를 확인하고 확인 완료로 표시해 주세요.');
+  if (!eligible.length) return notify('일정에 날짜를 입력하거나 할 일의 제목과 날짜를 확인 완료로 표시해 주세요.');
   const count = eligible.length;
-  if (!confirm(`확인 완료한 ${count}개 항목의 제목, 날짜, 상세 내용, 원문 근거와 출처 링크를 Google Calendar로 보냅니다. 진행할까요?\n\n완료하거나 해줌에서 삭제해도 Google Calendar 일정은 유지됩니다.`)) return;
+  if (!confirm(`${count}개 항목의 제목, 날짜, 상세 내용, 원문 근거와 출처 링크를 Google Calendar로 보냅니다. 진행할까요?\n\n완료하거나 해줌에서 삭제해도 Google Calendar 일정은 유지됩니다.`)) return;
   syncingCalendar = true;
   const button = find('sync-calendar');
   button.disabled = true;

@@ -17,6 +17,11 @@ export function googleEventId(itemId) {
   return `a${itemId.replaceAll('-', '').toLowerCase()}`;
 }
 
+export function eligibleForCalendar(item) {
+  if (!item || item.completed || !validDate(item.date) || !item.title?.trim()) return false;
+  return item.kind === 'schedule' || (item.confirmed && !item.needs_review);
+}
+
 function scheduledTime(value) {
   if (typeof value !== 'string') return null;
   const clock = value.match(/^(오전|오후)\s*(\d{1,2})(?:시)?(?:\s*(\d{1,2})분?)?$/);
@@ -43,8 +48,8 @@ function nextDate(value) {
 }
 
 export function makeGoogleEvent(item) {
-  if (!item || !item.confirmed || item.needs_review || item.completed || !validDate(item.date) || !item.title?.trim()) {
-    throw new Error('확인 완료했고 유효한 날짜가 있는 미완료 항목만 캘린더에 등록할 수 있습니다.');
+  if (!eligibleForCalendar(item)) {
+    throw new Error('유효한 날짜가 있는 일정 또는 확인 완료한 미완료 항목만 캘린더에 등록할 수 있습니다.');
   }
   const details = [
     item.action || item.details,

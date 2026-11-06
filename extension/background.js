@@ -1,6 +1,6 @@
 import { analyzeImageDataUrl, analyzeText } from './api.mjs';
 import { makeItems, validDate } from './core.mjs';
-import { GoogleCalendarError, syncGoogleEvent } from './calendar.mjs';
+import { eligibleForCalendar, GoogleCalendarError, syncGoogleEvent } from './calendar.mjs';
 import { mergeItems } from './item-store.mjs';
 
 const globalOrigins = ['https://*/*', 'http://*/*'];
@@ -26,10 +26,6 @@ async function storedItems() {
   const items = stored[ITEMS_KEY] ?? [];
   if (!Array.isArray(items)) throw new Error('저장된 할 일 목록을 읽을 수 없습니다.');
   return items;
-}
-
-function eligibleForCalendar(item) {
-  return Boolean(item.confirmed && !item.needs_review && !item.completed && validDate(item.date));
 }
 
 async function acquireCalendarToken(interactive = false) {
