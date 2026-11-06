@@ -27,7 +27,7 @@
 
 - 실문서·복잡한 표·스캔 PDF·흐린 이미지·대용량 파일의 OCR 정확도.
 - 여러 실제 사이트와 제한 페이지, 네이티브 사이트 권한 승인/회수, PDF 파일 접근, 재시작, 네트워크 단절.
-- Cloudflare Worker의 Claude 문서/이미지 요청 포맷은 모의 테스트했지만 실제 PDF·이미지를 보내는 라이브 분석은 개인정보와 API 비용 때문에 실행하지 않았습니다. PDF 표·스캔 문서 인식 품질은 아직 검증되지 않았습니다. 영구 저장·알림·OAuth/Calendar는 미구현이며, 고정 샘플은 정확도/성공률 근거가 아닙니다.
+- Cloudflare Worker의 multipart→Claude 경로는 개인정보 없는 합성 PDF로 실제 확인해 HTTP 200과 구조화된 결과를 받았습니다. 사용자 PDF/이미지와 표 문서의 실제 인식 정확도는 아직 검증하지 않았습니다. 영구 저장·알림·OAuth/Calendar는 미구현이며, 고정 샘플은 정확도/성공률 근거가 아닙니다.
 - `npx wrangler deploy --dry-run`은 16개 정적 자산과 `RATE_LIMITER`(10/60초), `ASSETS`, `CLAUDE_MODEL` 바인딩으로 통과했습니다. 승인 후 운영 배포했으며 `/`와 `styles.css`는 HTTP 200, `/api/status`는 설정된 모델을 반환, `/api/analyze` CORS 사전 요청은 204를 반환했습니다. 개인정보 전송과 API 비용을 피하려고 실제 분석 POST는 실행하지 않았습니다.
 - 직접 PDF/이미지 입력으로 변경한 현재 Worker 코드는 이 QA 갱신 시 운영 배포하지 않은 상태입니다. 로컬 dry-run과 모의 API 테스트는 별도로 실행합니다.
 - `npm run test:browser`는 Playwright Chromium 파일 설치 후에도 `libatk-1.0.so.0` 시스템 라이브러리가 없어 실행되지 않았습니다.
