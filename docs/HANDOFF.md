@@ -10,13 +10,13 @@
 
 캡쳐는 activeTab 권한을 사용합니다. 도우미 표시 권한만 있고 캡쳐 권한이 없는 경우 상단 확장 아이콘의 ‘현재 화면 캡쳐하기’로 시작하도록 안내합니다. 전체 사이트 표시는 선택 권한으로 최초 승인을 받습니다. 로컬 PDF는 별도 파일 URL 접근 허용 후 도우미를 표시합니다. 캡쳐 중 화면 크기가 바뀌면 좌표 오류를 피하기 위해 취소합니다.
 
-텍스트 분석은 운영 Cloudflare Worker의 Claude API에 연결됐습니다. PDF·이미지·캡쳐 원본 직접 전송은 로컬 변경으로 구현 중이며, 새 Worker 버전은 운영 배포 전입니다. 적용 후에는 파일 동의 뒤 원본을 보내고 Claude가 표/이미지 읽기와 내용 정리를 함께 수행합니다. 현재 샘플은 성능 측정 자료가 아닙니다. 영구 저장·알림·Calendar는 미구현입니다. Claude에 실제 파일을 보내는 라이브 요청은 아직 검증하지 않았습니다.
+텍스트·PDF·이미지·캡쳐 분석은 Cloudflare Worker를 통해 Claude API에 연결됩니다. 파일/캡쳐 원본은 사용자 동의 뒤 전송합니다. 현재 샘플은 성능 측정 자료가 아닙니다. 목록은 Chrome 프로필 `storage.local`에 저장하고, 사용자가 확인한 날짜가 있는 미완료 항목은 Google Calendar에 수동 동기화할 수 있습니다. 알림은 미구현입니다.
 
 ## 연결할 위치
 
 1. 완료: `workspace.js`의 `run`과 `review.js`의 ‘할 일 정리하기’가 공통 `api.mjs`를 통해 같은 Worker API를 호출합니다. 전송 동의와 45,000자 제한을 적용하고 응답은 `validateAnalysis` → `makeItems`로 변환합니다. 샘플은 실제 분석 결과로 취급하지 않습니다.
-2. `save`/수동 추가/편집/완료/삭제: 현재 메모리 `items` 대신 background의 단일 직렬화 저장 경로 연결. 화면 카드나 DOM을 저장 원본으로 사용하지 말 것. 사용자 확인 상태·원문·상세 필드를 보존할 것.
-3. 캘린더 버튼: 확인 완료 + 유효한 날짜 + 미완료 항목만 대상. OAuth 확장 ID 설정을 문서화. 안정적인 항목 ID로 원격 이벤트 ID를 만들고 두 화면이 같은 등록 경로를 사용할 것. 재시도·다중 클릭·부분 실패에도 중복 방지. 수정·삭제·완료의 원격 반영 정책을 UI에 명시.
+2. 완료: `save`/수동 추가/편집/완료/삭제는 background 직렬화 경로를 통해 `chrome.storage.local`에 저장합니다. 화면 카드/DOM은 저장 원본이 아닙니다.
+3. 완료: Google Calendar OAuth와 동기화는 `manifest.json`, `background.js`, `calendar.mjs`에 있습니다. 확인 완료·유효 날짜·미완료 항목만 허용하며 안정적인 이벤트 ID로 반복 동기화 시 기존 일정을 갱신합니다. Google Cloud OAuth 클라이언트 유형/확장 ID 설정과 실제 계정 로그인은 배포 환경에서 검증해야 합니다. 해줌에서 항목 완료/삭제 시 Google Calendar 일정은 자동 삭제하지 않습니다.
 4. 알림: 확인된 task만 한국 시간 09:00에 3/1/0일 전 예약. onInstalled/onStartup와 저장 변경 때 재조정. 서비스 워커가 깨어날 때마다 전체 알람 삭제하지 말 것. 날짜 범위/원문 날짜/이미 지난 시각은 검토로 돌릴 것.
 5. `background.js`의 `selection` → `review.js`의 `showSelectionReview`가 선택 원문을 페이지 안으로 전달합니다. 캡쳐는 같은 UI를 사용하며 `readCapture`로 OCR 문자열을 받습니다. 새 탭·iframe·`pendingSelection` 전달은 사용하지 않습니다. 원문 출처와 날짜 근거를 실제 AI 결과 모델에 연결해 주세요.
 
@@ -35,6 +35,8 @@
 권장 서비스 인터페이스: `analyze({text,source,signal})`, `listItems()`, `saveItems(items)`, `updateItem(id,patch,revision)`, `deleteItem(id)`, `syncCalendar(ids)`. 화면에 저장 성공을 표시하는 시점은 실제 쓰기 성공 이후여야 합니다.
 
 ## 보안·개인정보
+
+Calendar OAuth 클라이언트 ID는 manifest에 설정되어 있습니다. Google Cloud에서 Calendar API를 활성화하고 Chrome Extension OAuth 클라이언트의 확장 프로그램 ID를 현재 로드한 확장 프로그램 ID와 일치시켜야 합니다. 클라이언트 비밀 값은 확장 프로그램에 넣지 않습니다. Calendar 동기화는 사용자가 직접 실행하며 제목, 날짜, 상세 정보, 근거 및 출처 링크가 Google 계정의 기본 캘린더로 전송됩니다.
 
 AI 제공자 키는 서버 Secret. 확장 번들/저장소에 포함하지 않습니다. 공개 서버는 인증·사용자별/전역 사용량·비용 상한을 갖추고, 항목별 스키마 검증 및 서버 오류 일반화를 적용합니다. 드래그만으로 내용을 전송하지 말고 전송 내용을 확인받습니다. 외부 AI 전송 안내는 실제 제공자와 경유지를 명시합니다. 저장소와 로그에 원문·개인정보·토큰을 남기지 않습니다.
 

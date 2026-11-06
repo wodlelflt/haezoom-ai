@@ -11,5 +11,6 @@ for (const name of ['popup.html', 'workspace.html', 'capture-processor.html']) {
     if (!match[1].includes('://')) await access(resolve(root, match[1].split('#')[0]));
   }
 }
-if (manifest.permissions.some(permission => ['identity', 'alarms', 'notifications'].includes(permission))) throw new Error('UI 검토 버전에 미사용 권한이 있습니다.');
-console.log('Manifest, HTML assets and UI-only permissions: OK');
+if (!manifest.permissions.includes('identity') || manifest.oauth2?.scopes?.join(',') !== 'https://www.googleapis.com/auth/calendar.events') throw new Error('Google Calendar OAuth 권한 설정이 없습니다.');
+if (manifest.permissions.some(permission => ['alarms', 'notifications'].includes(permission))) throw new Error('사용하지 않는 알림 권한이 있습니다.');
+console.log('Manifest, HTML assets and Calendar OAuth permissions: OK');

@@ -25,15 +25,18 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 683 });
   await page.screenshot({ path: resolve(output, '01-document.png'), fullPage: true });
-  await page.getByRole('button', { name: '할 일 화면으로 가져가기 (미리보기)' }).click();
+  await page.getByRole('button', { name: '할 일 화면으로 가져가기' }).click();
+  await page.locator('#task-list .task-card').nth(1).waitFor();
   assert.equal(await page.locator('#task-list .task-card').count(), 2);
   const first = page.locator('#task-list .task-card').first();
   await first.getByRole('button', { name: '날짜·내용 확인' }).click();
   await first.getByLabel('확인한 날짜').fill('2026-11-13');
   await first.getByRole('checkbox').check();
   await first.getByRole('button', { name: '화면에 반영' }).click();
+  await first.getByText('확인 완료').waitFor();
   assert.match(await first.innerText(), /확인 완료/);
   await first.getByRole('button', { name: '완료 표시' }).click();
+  await page.locator('#task-list .task-card.done').waitFor();
   await page.locator('#filter').selectOption('completed');
   assert.equal(await page.locator('#task-list .task-card').count(), 1);
   await page.locator('#filter').selectOption('all');
@@ -42,7 +45,11 @@ try {
   await page.screenshot({ path: resolve(output, '03-mobile.png'), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.reload();
-  assert.equal(await page.locator('#task-list .task-card').count(), 0);
+  await page.locator('#task-list .task-card').nth(1).waitFor();
+  assert.equal(await page.locator('#task-list .task-card').count(), 2);
+  await page.locator('#filter').selectOption('completed');
+  assert.equal(await page.locator('#task-list .task-card').count(), 1);
+  await page.locator('#filter').selectOption('all');
   await page.locator('#file').setInputFiles({ name: 'notice.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ioAAAAASUVORK5CYII=', 'base64') });
   await page.locator('.selected-file').waitFor({ state: 'visible' });
   assert.equal(await page.locator('.selected-file-name').textContent(), 'notice.png');

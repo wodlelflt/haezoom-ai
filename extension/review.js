@@ -51,6 +51,26 @@
         analysisOutput.append(group);
       };
       addGroup('할 일', result.tasks, 'task'); addGroup('일정', result.schedules, 'schedule');
+      const save = create('button', '내 할 일에 저장', 'primary');
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          const response = await chrome.runtime.sendMessage({ type: 'saveAnalysis', payload: { result } });
+          if (!response?.ok) throw new Error(response?.error || '저장하지 못했어요.');
+          save.textContent = response.data.added ? `${response.data.added}개 저장 완료` : '이미 저장된 항목이에요';
+          status.textContent = response.data.added ? '분석 결과를 내 할 일에 저장했어요.' : '같은 문서의 항목이 이미 저장되어 있어요.';
+          const openTasks = create('button', '내 할 일 열기');
+          openTasks.onclick = async () => {
+            const opened = await chrome.runtime.sendMessage({ type: 'openWorkspace', payload: { view: 'tasks' } });
+            if (!opened?.ok) status.textContent = opened?.error || '내 할 일을 열지 못했어요.';
+          };
+          save.after(openTasks);
+        } catch (error) {
+          save.disabled = false;
+          status.textContent = `저장하지 못했어요. ${error.message}`;
+        }
+      };
+      analysisOutput.append(save);
       analysisOutput.hidden = false;
     };
     const analyze = create('button', '할 일 정리하기', 'primary');

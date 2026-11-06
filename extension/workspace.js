@@ -4,13 +4,38 @@ import { getPdfPageCount } from './ocr.mjs';
 import { analyzeDocument, analyzeText } from './api.mjs';
 
 const find = id => document.getElementById(id);
-let items = []; let draft = []; let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null;
+let items = []; let draft = []; let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null; let calendarConnected = false;
+find('save').textContent = '할 일 화면으로 가져가기';
+document.querySelector('#analysis-result > .tiny').textContent = '할 일은 이 Chrome 프로필에 저장됩니다.';
+document.querySelector('#tasks .hero .muted').textContent = '확인한 항목은 이 Chrome 프로필에 저장하고, 원하는 일정만 Google Calendar에 동기화할 수 있어요.';
+document.querySelector('#tasks .privacy').textContent = '해줌에서 항목을 완료하거나 삭제해도 이미 등록한 Google Calendar 일정은 유지됩니다. Google Calendar에서 별도로 관리해 주세요.';
+document.querySelector('#tasks > p.tiny').textContent = 'Google 계정을 연결한 뒤, 원문과 날짜를 확인 완료한 미완료 항목만 동기화할 수 있습니다.';
+const syncButton = find('export-ics');
+syncButton.id = 'sync-calendar';
+syncButton.textContent = '확인한 일정 동기화';
+syncButton.title = '확인 완료했고 유효한 날짜가 있는 미완료 항목을 Google Calendar에 동기화합니다.';
+const connectButton = document.createElement('button');
+connectButton.id = 'connect-calendar';
+connectButton.className = 'secondary';
+connectButton.type = 'button';
+connectButton.textContent = 'Google 캘린더 연결';
+syncButton.before(connectButton);
+async function request(type, payload = {}) {
+  const response = await chrome.runtime.sendMessage({ type, payload });
+  if (!response?.ok) throw new Error(response?.error || '요청을 처리하지 못했어요.');
+  return response.data;
+}
+async function refreshCalendarStatus() {
+  try { calendarConnected = (await request('calendarStatus')).connected; }
+  catch (error) { notify(error.message); }
+  renderItems();
+}
 document.querySelector('label[for="input-text"]').textContent = '내용 입력 또는 파일 추가 메모 (선택)';
 find('input-text').placeholder = '파일 없이 공지 내용을 입력하거나, 원본 파일을 선택한 뒤 확인할 내용을 메모할 수 있어요.';
 find('drop').querySelector('span').textContent = 'PDF 최대 20MB · 30페이지 · 이미지 최대 5MB';
 const settingsNotes = document.querySelectorAll('#settings .settings-panel p');
 settingsNotes[0].textContent = '캡쳐 이미지는 페이지에서 영역을 먼저 확인한 뒤, 분석 동의 시 이미지 자체를 Cloudflare Worker를 거쳐 Claude로 전송합니다. 선택 문장은 텍스트로 전송합니다.';
-settingsNotes[1].textContent = 'AI 분석은 Claude에 직접 연결됩니다. PDF·이미지는 로컬 OCR을 거치지 않고 원본을 보내 표와 문서 배치를 함께 분석합니다. 영구 저장, 알림, 캘린더는 미연결이며 결과 목록은 새로고침하면 초기화됩니다.';
+settingsNotes[1].textContent = 'AI 분석은 Claude에 연결되고, 할 일은 이 Chrome 프로필에 저장됩니다. Google Cloud Console에서 Calendar API를 사용 설정하고, OAuth 클라이언트를 Chrome Extension 유형으로 만든 뒤 현재 확장 프로그램 ID를 등록해야 로그인할 수 있습니다. Google 로그인 후 확인한 날짜가 있는 미완료 항목만 직접 동기화하세요. Calendar 일정은 해줌에서 항목을 완료하거나 삭제해도 자동으로 삭제되지 않습니다.';
 const uploadStyles = document.createElement('link'); uploadStyles.rel = 'stylesheet'; uploadStyles.href = new URL('./file-upload.css', import.meta.url).href; document.head.append(uploadStyles);
 const fileCard = document.createElement('div'); fileCard.className = 'selected-file'; fileCard.hidden = true;
 const fileIcon = document.createElement('span'); fileIcon.className = 'selected-file-icon';
@@ -53,7 +78,13 @@ function card(item, editable = false) {
   if (!editable) return element;
   const actions = node('div', undefined, 'actions');
   const button = (text, handler) => { const control = node('button', text, 'secondary'); control.type = 'button'; control.onclick = handler; return control; };
-  actions.append(button(item.completed ? '다시 할 일로' : '완료 표시', () => { item.completed = !item.completed; renderItems(); }));
+  actions.append(button(item.completed ? '다시 할 일로' : '완료 표시', async () => {
+    try {
+      items = await request('updateItem', { id: item.id, patch: { completed: !item.completed } });
+      renderItems();
+      if (!item.completed && item.calendarEventId) notify('완료로 표시했어요. 이미 등록된 Google Calendar 일정은 그대로 유지됩니다.');
+    } catch (error) { notify(error.message); }
+  }));
   const editForm = node('form', undefined, 'edit-form'); editForm.hidden = true;
   const titleLabel = node('label', '할 일 제목'); const title = node('input'); title.value = item.title; title.maxLength = 500; title.required = true; titleLabel.append(title);
   const dateLabel = node('label', '확인한 날짜'); const date = node('input'); date.type = 'date'; date.value = validDate(item.date) ? item.date : ''; dateLabel.append(date);
@@ -62,19 +93,50 @@ function card(item, editable = false) {
   const error = node('p', '', 'privacy'); error.setAttribute('role', 'alert');
   const apply = node('button', '화면에 반영', 'primary'); apply.type = 'submit';
   editForm.append(titleLabel, dateLabel, confirmation, error, apply);
-  editForm.onsubmit = event => { event.preventDefault(); if (!title.value.trim()) { error.textContent = '제목을 입력해 주세요.'; return; } if (confirmed.checked && !validDate(date.value)) { error.textContent = '정확한 날짜를 입력해 주세요.'; return; } item.originalDate ||= item.date; item.title = title.value.trim(); item.date = date.value || null; item.confirmed = confirmed.checked; item.needs_review = !confirmed.checked; renderItems(); notify('현재 화면에 반영했어요. 영구 저장은 아직 연결 전이에요.'); };
+  editForm.onsubmit = async event => {
+    event.preventDefault();
+    if (!title.value.trim()) { error.textContent = '제목을 입력해 주세요.'; return; }
+    if (confirmed.checked && !validDate(date.value)) { error.textContent = '정확한 날짜를 입력해 주세요.'; return; }
+    try {
+      const patch = { title: title.value.trim(), date: date.value || null, confirmed: confirmed.checked };
+      if (!item.originalDate) patch.originalDate = item.date;
+      items = await request('updateItem', { id: item.id, patch });
+      renderItems(); notify('수정한 내용을 이 Chrome 프로필에 저장했어요.');
+    } catch (failure) { error.textContent = failure.message; }
+  };
   actions.append(button('날짜·내용 확인', () => { editForm.hidden = !editForm.hidden; if (!editForm.hidden) title.focus(); }));
-  actions.append(button('삭제', () => { if (!confirm('이 미리보기 항목을 삭제할까요?')) return; items = items.filter(entry => entry.id !== item.id); renderItems(); }));
-  const calendar = button('캘린더 연결 예정', () => notify('캘린더 연결은 후속 개발 범위입니다.')); calendar.disabled = true; calendar.title = '후배 개발자가 연결할 예정입니다.'; actions.append(calendar);
+  actions.append(button('삭제', async () => {
+    const calendarNote = item.calendarEventId ? '\nGoogle Calendar에 이미 등록된 일정은 삭제되지 않습니다.' : '';
+    if (!confirm(`이 항목을 해줌 목록에서 삭제할까요?${calendarNote}`)) return;
+    try { items = await request('deleteItem', { id: item.id }); renderItems(); notify('해줌 목록에서 삭제했어요. Google Calendar 일정은 별도로 관리해 주세요.'); }
+    catch (error) { notify(error.message); }
+  }));
+  const eligible = item.confirmed && !item.needs_review && !item.completed && validDate(item.date);
+  const calendar = button(!calendarConnected ? 'Google 연결 필요' : eligible ? (item.calendarEventId ? '캘린더 업데이트' : '캘린더 등록') : '날짜 확인 후 등록', async () => {
+    if (!eligible) return;
+    if (!confirm(`“${item.title}”와 날짜, 상세 내용 및 근거를 Google Calendar에 ${item.calendarEventId ? '동기화' : '등록'}할까요?`)) return;
+    try {
+      const result = await request('syncCalendar', { itemIds: [item.id] });
+      items = result.items; renderItems();
+      if (result.failed.length) notify(`${item.title}: ${result.failed[0].error}`);
+      else notify(`${item.calendarEventId ? 'Google Calendar 일정을 업데이트했어요.' : 'Google Calendar에 일정을 등록했어요.'}`);
+    } catch (error) { notify(error.message); }
+  });
+  calendar.disabled = !calendarConnected || !eligible; actions.append(calendar);
   element.append(actions, editForm); return element;
 }
 function renderItems() {
   find('nav-count').textContent = items.filter(item => !item.completed).length;
+  const eligibleCount = items.filter(item => eligibleForUi(item)).length;
+  find('connect-calendar').textContent = calendarConnected ? 'Google 캘린더 연결 해제' : 'Google 캘린더 연결';
+  find('sync-calendar').disabled = !calendarConnected || eligibleCount === 0;
+  find('sync-calendar').textContent = eligibleCount ? `확인한 일정 동기화 (${eligibleCount})` : '확인한 일정 동기화';
   const filter = find('filter').value; const query = find('search').value.trim().toLowerCase();
   const visible = items.filter(item => (!query || `${item.title} ${detailText(item)}`.toLowerCase().includes(query)) && (filter === 'all' || (filter === 'pending' && !item.completed) || (filter === 'completed' && item.completed) || (filter === 'review' && !item.confirmed)));
   find('task-list').replaceChildren(...visible.map(item => card(item, true)));
   if (!visible.length) find('task-list').append(node('p', items.length ? '조건에 맞는 할 일이 없어요.' : '아직 가져온 항목이 없어요. 문서 정리에서 샘플을 먼저 둘러보세요.', 'empty'));
 }
+function eligibleForUi(item) { return item.confirmed && !item.needs_review && !item.completed && validDate(item.date); }
 find('filter').onchange = renderItems; find('search').oninput = renderItems;
 function showDraft(result, sample = false) {
   draft = makeItems(result, source);
@@ -91,7 +153,13 @@ find('sample').onclick = () => {
   showDraft(sample.result, true);
   notify('미리 작성한 샘플 결과예요. AI 분석이 아닙니다. 다시 누르면 다른 유형을 볼 수 있어요.');
 };
-find('save').onclick = () => { let added = 0; for (const item of draft) if (!items.some(old => old.title === item.title && old.date === item.date && old.source?.title === item.source?.title)) { items.push(structuredClone(item)); added++; } location.hash = 'tasks'; renderItems(); notify(`${added}개를 미리보기 목록에 담았어요. 새로고침하면 초기화됩니다.`); };
+find('save').onclick = async () => {
+  try {
+    const result = await request('addItems', { items: draft });
+    items = result.items; location.hash = 'tasks'; renderItems();
+    notify(`${result.added}개 항목을 저장했어요. 이 Chrome 프로필에서 다시 열어도 유지됩니다.`);
+  } catch (error) { notify(error.message); }
+};
 find('run').onclick = async () => {
   const text = find('input-text').value.trim();
   if (!selectedFile && !text) { notify('정리할 내용을 붙여 넣거나 파일을 선택해 주세요.'); find('input-text').focus(); return; }
@@ -112,12 +180,48 @@ find('run').onclick = async () => {
     busy = false; find('run').disabled = false; find('sample').disabled = false; find('input-text').disabled = false;
   }
 };
-find('manual').onsubmit = event => { event.preventDefault(); const title = find('manual-title').value.trim(); if (!title) return; items.push({ id: crypto.randomUUID(), kind: 'task', title, date: find('manual-date').value || null, evidence: '사용자가 직접 입력', source: { title: '직접 입력' }, needs_review: true, confirmed: false, completed: false }); event.target.reset(); renderItems(); notify('미리보기 목록에 추가했어요. 실제 저장은 연결 전입니다.'); };
-find('export-ics').disabled = true; find('export-ics').title = '캘린더 연결은 후속 개발 예정입니다.';
+find('manual').onsubmit = async event => {
+  event.preventDefault();
+  const title = find('manual-title').value.trim();
+  if (!title) return;
+  const item = { id: crypto.randomUUID(), kind: 'task', title, date: find('manual-date').value || null, evidence: '사용자가 직접 입력', source: { title: '직접 입력' }, needs_review: true, confirmed: false, completed: false, revision: 1 };
+  try {
+    const result = await request('addItems', { items: [item] });
+    items = result.items; event.target.reset(); renderItems(); notify('할 일을 이 Chrome 프로필에 저장했어요.');
+  } catch (error) { notify(error.message); }
+};
+find('connect-calendar').onclick = async () => {
+  try {
+    if (calendarConnected) {
+      if (!confirm('Google 계정 연결을 해제할까요? 이미 등록한 Google Calendar 일정은 유지됩니다.')) return;
+      await request('calendarDisconnect');
+      calendarConnected = false; renderItems(); notify('Google 캘린더 연결을 해제했어요. 기존 일정은 Google Calendar에서 관리해 주세요.');
+    } else {
+      await request('calendarConnect');
+      calendarConnected = true; renderItems(); notify('Google 캘린더가 연결됐어요. 확인 완료한 날짜만 직접 동기화할 수 있습니다.');
+    }
+  } catch (error) { notify(error.message); }
+};
+find('sync-calendar').onclick = async () => {
+  const eligible = items.filter(eligibleForUi);
+  if (!eligible.length) return notify('먼저 항목의 제목과 날짜를 확인하고 확인 완료로 표시해 주세요.');
+  const count = eligible.length;
+  if (!confirm(`확인 완료한 ${count}개 항목의 제목, 날짜, 상세 내용, 원문 근거와 출처 링크를 Google Calendar로 보냅니다. 진행할까요?\n\n완료하거나 해줌에서 삭제해도 Google Calendar 일정은 유지됩니다.`)) return;
+  find('sync-calendar').disabled = true;
+  notify('Google Calendar 일정을 동기화하고 있어요.');
+  try {
+    const result = await request('syncCalendar');
+    items = result.items; renderItems();
+    if (result.failed.length) {
+      const failures = result.failed.map(entry => `${entry.title}: ${entry.error}`).join(' · ');
+      notify(`${result.synced}개 동기화, ${result.skipped}개 제외, ${result.failed.length}개 실패. ${failures}`);
+    } else notify(`${result.synced}개 일정을 Google Calendar에 동기화했어요.${result.skipped ? ` 확인되지 않아 ${result.skipped}개는 제외했습니다.` : ''}`);
+  } catch (error) { notify(error.message); }
+};
 find('export-json').onclick = () => {
   if (!items.length) return notify('내려받을 항목이 없어요.');
-  const url = URL.createObjectURL(new Blob([JSON.stringify({ version: 2, mode: 'ui-preview', items }, null, 2)], { type: 'application/json' }));
-  const link = node('a'); link.href = url; link.download = 'haezoom-preview.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+  const url = URL.createObjectURL(new Blob([JSON.stringify({ version: 3, items }, null, 2)], { type: 'application/json' }));
+  const link = node('a'); link.href = url; link.download = 'haezoom-items.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 };
 async function readFile(file) {
   if (!file || busy) return;
@@ -148,3 +252,11 @@ for (const type of ['dragenter', 'dragover']) find('drop').addEventListener(type
 for (const type of ['dragleave', 'drop']) find('drop').addEventListener(type, event => { event.preventDefault(); find('drop').classList.remove('dragging'); });
 find('drop').addEventListener('drop', event => readFile(event.dataTransfer.files[0]));
 route();
+request('getItems').then(saved => { items = saved; renderItems(); }).catch(error => notify(error.message));
+refreshCalendarStatus();
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.haezoomItems && Array.isArray(changes.haezoomItems.newValue)) {
+    items = changes.haezoomItems.newValue;
+    renderItems();
+  }
+});
