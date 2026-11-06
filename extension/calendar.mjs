@@ -79,21 +79,36 @@ async function checkResponse(response) {
   throw new GoogleCalendarError(detail || `Google Calendar API 오류 (${response.status})`, response.status);
 }
 
-export async function syncGoogleEvent(token, item, fetcher = fetch) {
+export async function syncGoogleEvent(token, item, fetcher = fetch, timeoutMs = 15000) {
   const id = googleEventId(item.id);
   const event = makeGoogleEvent(item);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const url = `${calendarApi}/${encodeURIComponent(id)}`;
-  const existing = await fetcher(url, { headers });
+  const request = async (target, options) => {
+    const controller = new AbortController();
+    let timeout;
+    try {
+      return await Promise.race([
+        fetcher(target, { ...options, signal: controller.signal }),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new GoogleCalendarError('Google Calendar 응답 시간이 초과됐어요. 네트워크 연결을 확인하고 다시 시도해 주세요.', 0));
+            controller.abort();
+          }, timeoutMs);
+        })
+      ]);
+    } finally { clearTimeout(timeout); }
+  };
+  const existing = await request(url, { headers });
   if (existing.ok) {
-    const response = await fetcher(url, { method: 'PATCH', headers, body: JSON.stringify(event) });
+    const response = await request(url, { method: 'PATCH', headers, body: JSON.stringify(event) });
     await checkResponse(response);
     return { id, action: 'updated' };
   }
   if (existing.status !== 404) await checkResponse(existing);
-  const response = await fetcher(calendarApi, { method: 'POST', headers, body: JSON.stringify({ ...event, id }) });
+  const response = await request(calendarApi, { method: 'POST', headers, body: JSON.stringify({ ...event, id }) });
   if (response.status === 409) {
-    const update = await fetcher(url, { method: 'PATCH', headers, body: JSON.stringify(event) });
+    const update = await request(url, { method: 'PATCH', headers, body: JSON.stringify(event) });
     await checkResponse(update);
     return { id, action: 'updated' };
   }

@@ -5,7 +5,7 @@ import { analyzeDocument, analyzeText } from './api.mjs';
 import { mergeItems } from './item-store.mjs';
 
 const find = id => document.getElementById(id);
-let items = []; let draft = []; let selectedDraftIds = new Set(); let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null; let calendarConnected = false;
+let items = []; let draft = []; let selectedDraftIds = new Set(); let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false; let selectedFile = null; let calendarConnected = false; let syncingCalendar = false;
 find('save').textContent = '할 일 화면으로 가져가기';
 document.querySelector('#analysis-result > .tiny').textContent = '할 일은 이 Chrome 프로필에 저장됩니다.';
 document.querySelector('#tasks .hero .muted').textContent = '확인한 항목은 이 Chrome 프로필에 저장하고, 원하는 일정만 Google Calendar에 동기화할 수 있어요.';
@@ -21,12 +21,12 @@ connectButton.className = 'secondary';
 connectButton.type = 'button';
 connectButton.textContent = 'Google 캘린더 연결';
 syncButton.before(connectButton);
-async function request(type, payload = {}) {
+async function request(type, payload = {}, timeoutMs = 8000) {
   let timeout;
   const pending = chrome.runtime.sendMessage({ type, payload });
   const response = await Promise.race([
     pending,
-    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('백그라운드 응답이 지연되고 있어요. 다시 시도해 주세요.')), 8000); })
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('요청 응답이 지연되고 있어요. 네트워크와 Google 연결을 확인한 뒤 다시 시도해 주세요.')), timeoutMs); })
   ]).finally(() => clearTimeout(timeout));
   if (!response?.ok) throw new Error(response?.error || '요청을 처리하지 못했어요.');
   return response.data;
@@ -143,24 +143,31 @@ function card(item, editable = false, selectable = false) {
   }));
   const eligible = item.confirmed && !item.needs_review && !item.completed && validDate(item.date);
   const calendar = button(!calendarConnected ? 'Google 연결 필요' : eligible ? (item.calendarEventId ? '캘린더 업데이트' : '캘린더 등록') : '날짜 확인 후 등록', async () => {
-    if (!eligible) return;
+    if (!eligible || syncingCalendar) return;
     if (!confirm(`“${item.title}”와 날짜, 상세 내용 및 근거를 Google Calendar에 ${item.calendarEventId ? '동기화' : '등록'}할까요?`)) return;
+    const wasRegistered = Boolean(item.calendarEventId);
+    syncingCalendar = true;
+    calendar.disabled = true;
+    calendar.textContent = '동기화 중…';
     try {
-      const result = await request('syncCalendar', { itemIds: [item.id] });
+      const result = await request('syncCalendar', { itemIds: [item.id] }, 90000);
       items = result.items; renderItems();
       if (result.failed.length) notify(`${item.title}: ${result.failed[0].error}`);
-      else notify(`${item.calendarEventId ? 'Google Calendar 일정을 업데이트했어요.' : 'Google Calendar에 일정을 등록했어요.'}`);
-    } catch (error) { notify(error.message); }
+      else notify(`${wasRegistered ? 'Google Calendar 일정을 업데이트했어요.' : 'Google Calendar에 일정을 등록했어요.'}`);
+    } catch (error) { notify(`캘린더 동기화에 실패했어요. ${error.message}`); }
+    finally { syncingCalendar = false; renderItems(); }
   });
-  calendar.disabled = !calendarConnected || !eligible; actions.append(calendar);
+  calendar.disabled = !calendarConnected || !eligible || syncingCalendar;
+  if (syncingCalendar && eligible) calendar.textContent = '동기화 중…';
+  actions.append(calendar);
   element.append(actions, editForm); return element;
 }
 function renderItems() {
   find('nav-count').textContent = items.filter(item => !item.completed).length;
   const eligibleCount = items.filter(item => eligibleForUi(item)).length;
   find('connect-calendar').textContent = calendarConnected ? 'Google 캘린더 연결 해제' : 'Google 캘린더 연결';
-  find('sync-calendar').disabled = !calendarConnected || eligibleCount === 0;
-  find('sync-calendar').textContent = eligibleCount ? `확인한 일정 동기화 (${eligibleCount})` : '확인한 일정 동기화';
+  find('sync-calendar').disabled = !calendarConnected || eligibleCount === 0 || syncingCalendar;
+  find('sync-calendar').textContent = syncingCalendar ? '캘린더 동기화 중…' : eligibleCount ? `확인한 일정 동기화 (${eligibleCount})` : '확인한 일정 동기화';
   const filter = find('filter').value; const query = find('search').value.trim().toLowerCase();
   const visible = items.filter(item => (!query || `${item.title} ${detailText(item)}`.toLowerCase().includes(query)) && (filter === 'all' || (filter === 'pending' && !item.completed) || (filter === 'completed' && item.completed) || (filter === 'review' && !item.confirmed)));
   find('task-list').replaceChildren(...visible.map(item => card(item, true)));
@@ -256,20 +263,28 @@ find('connect-calendar').onclick = async () => {
   finally { button.disabled = false; }
 };
 find('sync-calendar').onclick = async () => {
+  if (syncingCalendar) return;
   const eligible = items.filter(eligibleForUi);
   if (!eligible.length) return notify('먼저 항목의 제목과 날짜를 확인하고 확인 완료로 표시해 주세요.');
   const count = eligible.length;
   if (!confirm(`확인 완료한 ${count}개 항목의 제목, 날짜, 상세 내용, 원문 근거와 출처 링크를 Google Calendar로 보냅니다. 진행할까요?\n\n완료하거나 해줌에서 삭제해도 Google Calendar 일정은 유지됩니다.`)) return;
-  find('sync-calendar').disabled = true;
-  notify('Google Calendar 일정을 동기화하고 있어요.');
+  syncingCalendar = true;
+  const button = find('sync-calendar');
+  button.disabled = true;
+  button.textContent = '캘린더 동기화 중…';
+  notify(`${count}개 일정을 Google Calendar에 동기화하고 있어요. 잠시 기다려 주세요.`);
   try {
-    const result = await request('syncCalendar');
+    const result = await request('syncCalendar', {}, 90000);
     items = result.items; renderItems();
     if (result.failed.length) {
       const failures = result.failed.map(entry => `${entry.title}: ${entry.error}`).join(' · ');
       notify(`${result.synced}개 동기화, ${result.skipped}개 제외, ${result.failed.length}개 실패. ${failures}`);
     } else notify(`${result.synced}개 일정을 Google Calendar에 동기화했어요.${result.skipped ? ` 확인되지 않아 ${result.skipped}개는 제외했습니다.` : ''}`);
   } catch (error) { notify(error.message); }
+  finally {
+    syncingCalendar = false;
+    renderItems();
+  }
 };
 find('export-json').onclick = () => {
   if (!items.length) return notify('내려받을 항목이 없어요.');

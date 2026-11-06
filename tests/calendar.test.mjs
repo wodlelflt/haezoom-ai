@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { googleEventId, makeGoogleEvent, syncGoogleEvent } from '../extension/calendar.mjs';
+import { GoogleCalendarError, googleEventId, makeGoogleEvent, syncGoogleEvent } from '../extension/calendar.mjs';
 
 const item = {
   id: '00112233-4455-4677-8899-aabbccddeeff',
@@ -78,4 +78,15 @@ test('동시 등록 충돌은 PATCH로 이어서 중복 생성을 피한다', as
   });
   assert.equal(result.action, 'updated');
   assert.equal(call, 3);
+});
+
+test('응답하지 않는 Calendar API는 제한 시간 안에 취소하고 오류로 돌려준다', async () => {
+  let aborted = false;
+  await assert.rejects(
+    syncGoogleEvent('token', item, (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }, { once: true });
+    }), 10),
+    error => error instanceof GoogleCalendarError && error.status === 0 && /시간이 초과/.test(error.message)
+  );
+  assert.equal(aborted, true);
 });
