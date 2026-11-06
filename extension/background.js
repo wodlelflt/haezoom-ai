@@ -1,3 +1,5 @@
+import { analyzeText } from './api.mjs';
+
 const globalOrigins = ['https://*/*', 'http://*/*'];
 let globalQueue = Promise.resolve();
 function enableGlobal() {
@@ -52,8 +54,13 @@ async function readCapture(image) {
   }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !['selection', 'openWorkspace', 'captureViewport', 'readCapture', 'startCapture', 'enableGlobal', 'disableGlobal'].includes(message.type)) return false;
+  if (sender.id !== chrome.runtime.id || !['selection', 'openWorkspace', 'captureViewport', 'readCapture', 'startCapture', 'analyzeText', 'enableGlobal', 'disableGlobal'].includes(message.type)) return false;
   const open = async () => {
+    if (message.type === 'analyzeText') {
+      if (!sender.tab && !sender.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('확장 프로그램에서 분석을 시작해 주세요.');
+      if (sender.tab && !/^(https?|file):/.test(sender.tab.url || '')) throw new Error('웹페이지에서 분석을 시작해 주세요.');
+      return analyzeText(message.payload?.text, message.payload?.layoutText || '');
+    }
     if (message.type === 'enableGlobal' || message.type === 'disableGlobal') {
       if (!sender.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('확장 설정에서 변경해 주세요.');
       if (message.type === 'enableGlobal') return enableGlobal();

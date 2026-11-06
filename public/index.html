@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f6f2" />
+    <title>문서 인사이트 | Haezoom</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="extension-entry.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Haezoom 홈">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span>haezoom<span class="brand-period">.</span></span>
+        </a>
+        <div class="workspace-label">WORKSPACE</div>
+        <button class="nav-item active" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4A1.5 1.5 0 0 1 11 5.5v4A1.5 1.5 0 0 1 9.5 11h-4A1.5 1.5 0 0 1 4 9.5zm9 0A1.5 1.5 0 0 1 14.5 4h4A1.5 1.5 0 0 1 20 5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 9.5zm-9 9A1.5 1.5 0 0 1 5.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 4 18.5zm9 0a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5z" /></svg>
+          문서 분석
+        </button>
+        <div class="sidebar-note">
+          <span class="note-icon" aria-hidden="true">↗</span>
+          <p>문서를 읽고<br /><strong>핵심만 선명하게.</strong></p>
+          <span class="note-line"></span>
+          <span class="note-caption">OCR + AI EXTRACTION</span>
+        </div>
+        <div class="sidebar-footer"><span class="status-dot"></span> 로컬 OCR 활성화</div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb"><span>Workspace</span><span class="breadcrumb-slash">/</span><strong>문서 분석</strong></div>
+          <button class="settings-button" id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5ZM4.7 13.2l-1.05.8 1.5 2.6 1.25-.45a6.95 6.95 0 0 0 1.45.84l.2 1.3h3l.2-1.3a6.95 6.95 0 0 0 1.45-.84l1.25.45 1.5-2.6-1.05-.8c.1-.4.15-.8.15-1.2s-.05-.8-.15-1.2l1.05-.8-1.5-2.6-1.25.45a6.95 6.95 0 0 0-1.45-.84l-.2-1.3h-3l-.2 1.3a6.95 6.95 0 0 0-1.45.84L5.15 7.4l-1.5 2.6 1.05.8c-.1.4-.15.8-.15 1.2s.05.8.15 1.2Z" /></svg>
+            <span>API 설정</span>
+            <span class="key-indicator" id="key-indicator" aria-label="API 키 미입력"></span>
+          </button>
+        </header>
+
+        <section class="settings-panel" id="settings-panel" hidden>
+          <div class="settings-heading"><div><span class="eyebrow">AI CONNECTION</span><h2>AI 연결 설정</h2></div><button class="icon-button" id="settings-close" type="button" aria-label="설정 닫기">×</button></div>
+          <p class="settings-copy">Gemini, Claude 또는 OpenAI API를 사용할 수 있습니다. 선택한 서비스의 API 키를 프로젝트 루트의 <code>.env</code>에 입력하고 서버를 다시 시작하세요.</p>
+          <pre class="env-example">AI_PROVIDER=gemini
+GEMINI_API_KEY=발급받은_API_키
+GEMINI_MODEL=gemini-3.8-flash
+
+# Claude 사용 시:
+# AI_PROVIDER=claude
+# ANTHROPIC_API_KEY=발급받은_API_키
+# CLAUDE_MODEL=claude-haiku-5-5
+
+# OpenAI 사용 시 AI_PROVIDER=openai</pre>
+          <div class="settings-row"><span class="field-label">사용 모델</span><strong id="server-model">확인 중...</strong></div>
+          <div class="settings-actions"><span id="settings-status" role="status">로컬 서버 연결을 확인하는 중</span><button id="settings-refresh" class="button button-dark" type="button">연결 확인</button></div>
+        </section>
+
+        <div class="page-wrap">
+          <section class="page-heading">
+            <div><div class="eyebrow"><span class="eyebrow-rule"></span> DOCUMENT TASKS</div><h1>문서 할 일 추출</h1><p>PDF와 이미지에서 해야 할 일과 제출 정보를 찾아냅니다.</p></div>
+            <div class="heading-stamp"><span>01</span><span class="stamp-line"></span><span>ANALYZE</span></div>
+          </section>
+
+          <section class="upload-section" aria-labelledby="upload-title">
+            <div class="section-topline"><div><span class="section-index">01</span><h2 id="upload-title">문서 가져오기</h2></div><span class="file-support">PDF · PNG · JPG · WEBP</span></div>
+            <label class="drop-zone" id="drop-zone" for="file-input">
+              <input id="file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" />
+              <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" /></svg></span>
+              <span class="drop-title">문서를 여기에 놓으세요</span>
+              <span class="drop-subtitle">또는 <span>파일 찾아보기</span></span>
+              <span class="drop-footnote">이미지와 PDF, 최대 20MB</span>
+            </label>
+            <div class="document-row" id="document-row" hidden>
+              <div class="file-icon" id="file-icon">PDF</div>
+              <div class="file-details"><strong id="file-name"></strong><span id="file-meta"></span></div>
+              <button class="icon-button remove-file" id="remove-file" type="button" aria-label="문서 제거">×</button>
+            </div>
+          </section>
+
+          <section class="analysis-section" aria-labelledby="analysis-title">
+            <div class="section-topline"><div><span class="section-index">02</span><h2 id="analysis-title">분석 결과</h2></div><button class="button button-green" id="analyze-button" type="button" disabled><span class="button-spark" aria-hidden="true">✳</span> 문서 분석</button></div>
+            <div class="result-shell" id="result-shell">
+              <div class="empty-state" id="empty-state">
+                <div class="empty-art" aria-hidden="true"><span class="art-sheet"><i></i><i></i><i></i><b>+</b></span><span class="art-spark">✳</span></div>
+                <strong>아직 분석한 문서가 없습니다</strong>
+                <span>문서를 추가하면 일정과 해야 할 일이 함께 표시됩니다.</span>
+              </div>
+              <div class="progress-state" id="progress-state" hidden>
+                <div class="progress-head"><div><span class="eyebrow" id="progress-step">PREPARING DOCUMENT</span><strong id="progress-message">문서를 준비하고 있습니다</strong></div><span class="progress-percent" id="progress-percent">0%</span></div>
+                <div class="progress-track"><span id="progress-fill"></span></div>
+                <div class="progress-foot"><span class="status-dot"></span><span id="progress-detail">파일을 확인하는 중</span></div>
+              </div>
+              <div class="error-state" id="error-state" hidden><span class="error-mark">!</span><div><strong>분석을 완료하지 못했습니다</strong><p id="error-message"></p></div></div>
+              <div class="results" id="results" hidden>
+                <div class="key-info-block"><div class="result-block-heading"><span class="eyebrow">SCHEDULES</span><button class="text-button" id="download-json" type="button">JSON 다운로드 <span aria-hidden="true">↗</span></button></div><div class="schedule-list" id="schedule-list"></div></div>
+                <div class="key-info-block"><div class="result-block-heading"><span class="eyebrow">TASKS</span></div><div class="task-list" id="task-list"></div></div>
+                <details class="ocr-details"><summary>OCR 원문 보기 <span id="ocr-character-count"></span></summary><pre id="ocr-text"></pre></details>
+              </div>
+            </div>
+            <p class="privacy-note"><span aria-hidden="true">◈</span> 문서 파일은 브라우저에서 OCR 처리되며, 추출한 텍스트와 표의 행·열 구조만 로컬 서버를 거쳐 선택한 AI 제공자로 전송됩니다.</p>
+          </section>
+          <footer class="page-footer"><span>HAEZOOM DOCUMENT INTELLIGENCE</span><span>YOUR DOCUMENTS, CLEARER.</span></footer>
+        </div>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

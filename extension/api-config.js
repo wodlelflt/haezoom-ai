@@ -1,0 +1,1 @@
+export const HAEZOOM_API_BASE_URL = 'https://haezoom.sleepwhale.workers.dev';

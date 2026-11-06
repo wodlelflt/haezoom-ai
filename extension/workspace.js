@@ -1,11 +1,12 @@
 import { makeItems, validDate } from './core.mjs';
 import { samples } from './samples.mjs';
 import { extractText } from './ocr.mjs';
+import { analyzeText } from './api.mjs';
 
 const find = id => document.getElementById(id);
 let items = []; let draft = []; let sampleIndex = 0; let source = { title: '입력한 문서' }; let busy = false;
 const notify = text => { find('status').textContent = text; };
-function invalidateResult() { draft = []; find('analysis-result').hidden = true; find('result-empty').hidden = false; }
+function invalidateResult() { draft = []; find('analysis-result').hidden = true; find('result-empty').hidden = false; find('save').disabled = true; }
 find('input-text').addEventListener('input', () => { invalidateResult(); source = { title: '입력한 문서' }; });
 function route() {
   const target = ['analyze', 'tasks', 'settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'analyze';
@@ -55,16 +56,37 @@ function renderItems() {
   if (!visible.length) find('task-list').append(node('p', items.length ? '조건에 맞는 할 일이 없어요.' : '아직 가져온 항목이 없어요. 문서 정리에서 샘플을 먼저 둘러보세요.', 'empty'));
 }
 find('filter').onchange = renderItems; find('search').oninput = renderItems;
+function showDraft(result, sample = false) {
+  draft = makeItems(result, source);
+  find('summary').textContent = result.summary;
+  find('sample-badge').hidden = !sample;
+  find('result-empty').hidden = true; find('analysis-result').hidden = false;
+  find('draft-list').replaceChildren(...draft.map(item => card(item)));
+  find('save').disabled = !draft.length;
+  if (!draft.length) find('draft-list').append(node('p', '이 문서에는 해야 할 일이나 날짜가 있는 일정이 없어요.', 'muted'));
+}
 find('sample').onclick = () => {
   const sample = samples[sampleIndex++ % samples.length]; find('input-text').value = sample.text; source = { title: `가상 샘플 문서 ${(sampleIndex - 1) % samples.length + 1}` };
-  draft = makeItems(sample.result, source); find('summary').textContent = sample.result.summary;
-  find('sample-badge').hidden = false; find('result-empty').hidden = true; find('analysis-result').hidden = false;
-  find('draft-list').replaceChildren(...draft.map(item => card(item))); find('save').disabled = !draft.length;
-  if (!draft.length) find('draft-list').append(node('p', '이 문서에는 해야 할 일이나 날짜가 있는 일정이 없어요.', 'muted'));
+  showDraft(sample.result, true);
   notify('미리 작성한 샘플 결과예요. AI 분석이 아닙니다. 다시 누르면 다른 유형을 볼 수 있어요.');
 };
 find('save').onclick = () => { let added = 0; for (const item of draft) if (!items.some(old => old.title === item.title && old.date === item.date && old.source?.title === item.source?.title)) { items.push(structuredClone(item)); added++; } location.hash = 'tasks'; renderItems(); notify(`${added}개를 미리보기 목록에 담았어요. 새로고침하면 초기화됩니다.`); };
-find('run').onclick = () => { if (!find('input-text').value.trim()) { notify('정리할 내용을 붙여 넣거나 파일을 선택해 주세요.'); find('input-text').focus(); return; } notify('문서는 준비됐어요. 실제 AI 분석 연결은 후배 개발자의 작업 범위예요. 아래 샘플 결과로 화면 흐름을 확인해 주세요.'); };
+find('run').onclick = async () => {
+  const text = find('input-text').value.trim();
+  if (!text) { notify('정리할 내용을 붙여 넣거나 파일을 선택해 주세요.'); find('input-text').focus(); return; }
+  if (busy) return;
+  if (!confirm('원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?')) return;
+  busy = true; find('run').disabled = true; find('sample').disabled = true; find('input-text').disabled = true; invalidateResult();
+  notify('원문을 전송하고 분석하고 있어요.');
+  try {
+    showDraft(await analyzeText(text), false);
+    notify('분석이 완료됐어요. 원문과 결과를 확인해 주세요.');
+  } catch (error) {
+    notify(`분석에 실패했어요. ${error.message}`);
+  } finally {
+    busy = false; find('run').disabled = false; find('sample').disabled = false; find('input-text').disabled = false;
+  }
+};
 find('manual').onsubmit = event => { event.preventDefault(); const title = find('manual-title').value.trim(); if (!title) return; items.push({ id: crypto.randomUUID(), kind: 'task', title, date: find('manual-date').value || null, evidence: '사용자가 직접 입력', source: { title: '직접 입력' }, needs_review: true, confirmed: false, completed: false }); event.target.reset(); renderItems(); notify('미리보기 목록에 추가했어요. 실제 저장은 연결 전입니다.'); };
 find('export-ics').disabled = true; find('export-ics').title = '캘린더 연결은 후속 개발 예정입니다.';
 find('export-json').onclick = () => {

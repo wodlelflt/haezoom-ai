@@ -32,7 +32,42 @@
     const editor = create('div', '', 'pane'); const label = create('label', '읽어온 내용'); label.htmlFor = 'haezoom-review-text';
     const text = create('textarea'); text.id = label.htmlFor; text.maxLength = 45000; text.placeholder = image ? '글자 읽기를 누르거나 직접 입력해 주세요.' : '내용을 확인하고 수정해 주세요.'; text.value = initialText;
     const copy = create('button', '내용 복사'); copy.onclick = async () => { try { await navigator.clipboard.writeText(text.value); status.textContent = '내용을 복사했어요.'; } catch { text.focus(); text.select(); status.textContent = '내용을 선택했어요. ⌘C 또는 Ctrl+C로 복사해 주세요.'; } };
-    const analyze = create('button', '할 일 정리하기', 'primary'); analyze.onclick = () => { status.textContent = 'AI 분석은 아직 연결 전이에요. 지금은 내용을 확인하고 수정할 수 있어요.'; };
+    const analysisOutput = create('section'); analysisOutput.hidden = true; analysisOutput.setAttribute('aria-live', 'polite'); analysisOutput.style.cssText = 'max-height:180px;overflow:auto;padding:12px;border:1px solid #e5e7eb;border-radius:12px;background:#fafafa;';
+    const renderAnalysis = result => {
+      analysisOutput.replaceChildren(create('strong', '분석 요약'), create('p', result.summary));
+      const addGroup = (title, items, kind) => {
+        const group = create('div'); group.style.marginTop = '12px'; group.append(create('strong', title));
+        if (!items.length) group.append(create('p', '해당 항목이 없어요.'));
+        for (const item of items) {
+          const row = create('article'); row.style.cssText = 'padding:8px 0;border-top:1px solid #e5e7eb;';
+          row.append(create('strong', item.title));
+          const detail = kind === 'task'
+            ? [item.deadline || '날짜 확인 필요', item.action, item.materials.length ? `준비물 · ${item.materials.join(', ')}` : '', item.cost != null ? `비용 · ${item.cost.toLocaleString()}원` : '', item.submission ? `제출처 · ${item.submission}` : '']
+            : [item.date || '날짜 확인 필요', item.time, item.location, item.details];
+          row.append(create('p', detail.filter(Boolean).join(' · ')));
+          row.append(create('p', `근거 · ${item.evidence || '없음'}${item.needs_review ? ' · 원문 확인 필요' : ''}`));
+          group.append(row);
+        }
+        analysisOutput.append(group);
+      };
+      addGroup('할 일', result.tasks, 'task'); addGroup('일정', result.schedules, 'schedule');
+      analysisOutput.hidden = false;
+    };
+    const analyze = create('button', '할 일 정리하기', 'primary');
+    analyze.onclick = async () => {
+      const value = text.value.trim();
+      if (!value) { status.textContent = '분석할 원문을 입력해 주세요.'; text.focus(); return; }
+      if (value.length > 45000) { status.textContent = '원문은 45,000자 이내여야 해요.'; return; }
+      if (!confirm('원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude API로 전송해 분석합니다. 동의하고 진행할까요?')) return;
+      analyze.disabled = true; status.textContent = '원문을 전송하고 분석하고 있어요.';
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'analyzeText', payload: { text: value } });
+        if (!response?.ok) throw new Error(response?.error || '분석에 실패했어요.');
+        renderAnalysis(response.data); status.textContent = '분석이 완료됐어요. 원문과 결과를 확인해 주세요.';
+      } catch (error) {
+        status.textContent = /context invalidated/i.test(error.message) ? '해줌이 업데이트되었어요. 창을 닫고 페이지를 새로고침해 주세요.' : `분석에 실패했어요. ${error.message}`;
+      } finally { analyze.disabled = false; }
+    };
     const editActions = create('div', '', 'actions'); editActions.append(copy, analyze); editor.append(label, text, editActions);
     if (image) {
       const imagePane = create('div', '', 'pane image-pane');
@@ -55,7 +90,7 @@
       };
       imagePane.append(imageWrap, read); columns.append(imagePane);
     }
-    columns.append(editor); body.append(heading, columns, status, create('p', image ? '글자는 기기에서 읽어요. 첫 실행 시 언어 데이터를 내려받습니다.' : '가져온 문장을 외부 서버로 전송하지 않았어요.', 'note'));
+    columns.append(editor); body.append(heading, columns, analysisOutput, status, create('p', image ? '캡쳐 이미지는 전송하지 않아요. 분석 동의 후 OCR 텍스트를 Claude에 전송합니다.' : '분석 동의 후 원문 텍스트를 해줌 Cloudflare Worker를 거쳐 Claude에 전송합니다.', 'note'));
     panel.append(header, body, zoom); backdrop.append(panel); shadow.prepend(style); shadow.append(backdrop); document.documentElement.append(host);
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); if (!zoom.hidden) zoomBack.click(); else cleanup(); }
